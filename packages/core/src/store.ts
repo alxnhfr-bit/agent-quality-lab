@@ -14,6 +14,7 @@ import {
   evaluationRecordSchema,
   manifestSchema,
   type CaseResult,
+  type DatasetCase,
   type EvaluationRecord,
   type Manifest,
 } from "./artifact.ts";
@@ -27,6 +28,8 @@ export interface StoredRun {
   manifest: Manifest;
   /** dataset.jsonl exactly as it was snapshotted. */
   datasetText: string;
+  /** The same cases as plain JSON, not typed by any scenario. */
+  cases: DatasetCase[];
   results: CaseResult[];
   /** null when the run has not been evaluated. */
   evaluations: EvaluationRecord[] | null;
@@ -131,7 +134,8 @@ export async function loadRun(dir: string): Promise<StoredRun> {
     evaluationsText === null
       ? null
       : parseJsonl(evaluationsText, evaluationRecordSchema, `${dir}/evaluations.jsonl`);
-  return { dir, manifest, datasetText, results, evaluations };
+  const cases = parseJsonl(datasetText, datasetCaseSchema, `${dir}/dataset.jsonl`);
+  return { dir, manifest, datasetText, cases, results, evaluations };
 }
 
 function checkAgainstManifest(manifest: Manifest, datasetText: string, results: CaseResult[]): void {

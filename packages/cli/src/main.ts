@@ -11,8 +11,9 @@ const USAGE = `Usage:
   aql eval <run>
       Score an existing run again with the scenario's current evaluators.
 
-  aql compare <run-a> <run-b>
+  aql compare <run-a> <run-b> [--html <file>]
       Show where two runs of the same scenario and dataset differ, case by case.
+      With --html, also write the comparison as one self-contained page.
 
 A run is named by its id (its directory name under runs/) or by a path.
 Scenarios live in scenarios/<scenario>/scenario.ts, candidates next to them in candidates/<name>.ts.`;
@@ -26,6 +27,7 @@ async function main(argv: string[]): Promise<string> {
       options: {
         candidate: { type: "string" },
         dataset: { type: "string" },
+        html: { type: "string" },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -40,7 +42,7 @@ async function main(argv: string[]): Promise<string> {
   const project = { root, runsDir: join(root, "runs") };
 
   if (command === "compare" && target && second && extra.length === 0) {
-    return compareCommand(project, { a: target, b: second });
+    return compareCommand(project, { a: target, b: second, html: values.html });
   }
   if (second !== undefined) throw new UsageError(USAGE);
   if (command === "run" && target && values.candidate && extra.length === 0) {

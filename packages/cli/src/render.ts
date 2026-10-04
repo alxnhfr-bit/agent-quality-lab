@@ -183,7 +183,7 @@ function describeFailure(result: CaseResult): string[] {
   }
 }
 
-function ms(value: number): string {
+export function ms(value: number): string {
   return `${value < 10 ? value.toFixed(2) : value.toFixed(0)} ms`;
 }
 

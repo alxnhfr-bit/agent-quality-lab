@@ -79,6 +79,25 @@ test("compare shows where two stored runs differ, and refuses a run that is not 
   );
 });
 
+test("compare writes the comparison as an HTML page when asked", async () => {
+  const p = await project();
+  await runCommand(p, { scenario: "stock-check", candidate: "baseline" }, () => {});
+  await runCommand(p, { scenario: "stock-check", candidate: "mock-agent" }, () => {});
+  const runIds = await readdir(p.runsDir);
+  const a = runIds.find((id) => id.endsWith("_baseline"))!;
+  const b = runIds.find((id) => id.endsWith("_mock-agent"))!;
+  const file = join(p.runsDir, "report.html");
+
+  const output = await compareCommand(p, { a, b, html: file });
+  assert.ok(output.endsWith(`HTML report written to ${file}`));
+  assert.equal(output.split("\n\nHTML report written to")[0], await compareCommand(p, { a, b }));
+
+  const page = await readFile(file, "utf8");
+  assert.ok(page.includes(a) && page.includes(b));
+  assert.equal(page.match(/<details class="case"/g)?.length, 12);
+  assert.equal(page.includes(root), false);
+});
+
 test("mistakes in usage name what is available", async () => {
   const p = await project();
   const run = (args: Parameters<typeof runCommand>[1]) => runCommand(p, args, () => {});

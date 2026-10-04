@@ -2,7 +2,7 @@
  * What each command does, apart from parsing arguments and printing. Every
  * number shown comes from core; this file only wires core functions together.
  */
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -24,6 +24,7 @@ import {
   writeRun,
 } from "@agent-quality-lab/core/store";
 import { renderComparison, renderRun } from "./render.ts";
+import { renderHtmlReport } from "./report/html.ts";
 
 /** A mistake in how the command was used. Shown as a message, without a stack trace. */
 export class UsageError extends Error {}
@@ -92,13 +93,21 @@ export async function evalCommand(project: Project, args: { run: string }): Prom
   });
 }
 
-export async function compareCommand(project: Project, args: { a: string; b: string }): Promise<string> {
+export async function compareCommand(
+  project: Project,
+  args: { a: string; b: string; html?: string | undefined },
+): Promise<string> {
   const [a, b] = await Promise.all([loadRun(findRun(project, args.a)), loadRun(findRun(project, args.b))]);
   const reasons = comparability(a, b);
   if (reasons.length > 0) {
     throw new UsageError(`these runs cannot be compared:\n${reasons.map((reason) => `  - ${reason}`).join("\n")}`);
   }
-  return renderComparison(compare(a, b), a, b);
+  const comparison = compare(a, b);
+  const text = renderComparison(comparison, a, b);
+  if (args.html === undefined) return text;
+
+  writeFileSync(args.html, renderHtmlReport({ comparison, a, b, cases: a.cases }));
+  return `${text}\n\nHTML report written to ${args.html}`;
 }
 
 /** A run is named by its id, or by a path to its directory. */

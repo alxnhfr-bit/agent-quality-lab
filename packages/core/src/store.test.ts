@@ -134,6 +134,10 @@ test("a stored run loads without evaluations until it has been scored", async ()
     dir,
     manifest: run.manifest,
     datasetText: text,
+    cases: [
+      { id: "a", input: { n: 1 }, expected: { n: 2 }, tags: ["easy"] },
+      { id: "b", input: { n: 2 } },
+    ],
     results: run.results,
     evaluations: null,
   });

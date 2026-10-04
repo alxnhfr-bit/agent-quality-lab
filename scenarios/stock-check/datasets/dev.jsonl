@@ -1,0 +1,12 @@
+{"id":"in-stock","input":{"sku":"kettle","quantity":2},"expected":{"behaviour":"answer","canFulfil":true,"maxToolCalls":1}}
+{"id":"in-stock-exact","input":{"sku":"kettle","quantity":12},"expected":{"behaviour":"answer","canFulfil":true,"maxToolCalls":1},"tags":["boundary"]}
+{"id":"small-exact","input":{"sku":"desk","quantity":3},"expected":{"behaviour":"answer","canFulfil":true,"maxToolCalls":1},"tags":["boundary"]}
+{"id":"small-one-over","input":{"sku":"desk","quantity":4},"expected":{"behaviour":"answer","canFulfil":false,"maxToolCalls":1},"tags":["boundary"]}
+{"id":"out-of-stock","input":{"sku":"lamp","quantity":1},"expected":{"behaviour":"answer","canFulfil":false,"maxToolCalls":1}}
+{"id":"bulk-exact","input":{"sku":"chair","quantity":40},"expected":{"behaviour":"answer","canFulfil":true,"maxToolCalls":1},"tags":["boundary"]}
+{"id":"bulk-one-over","input":{"sku":"chair","quantity":41},"expected":{"behaviour":"answer","canFulfil":false,"maxToolCalls":1},"tags":["boundary"]}
+{"id":"unknown-item","input":{"sku":"hammock","quantity":1},"expected":{"behaviour":"abstain","maxToolCalls":1},"tags":["should-abstain"]}
+{"id":"unknown-item-bulk","input":{"sku":"trampoline","quantity":5},"expected":{"behaviour":"abstain","maxToolCalls":1},"tags":["should-abstain"]}
+{"id":"flaky-lookup","input":{"sku":"mug","quantity":10},"expected":{"behaviour":"answer","canFulfil":true,"maxToolCalls":2},"tags":["tool-failure"]}
+{"id":"flaky-lookup-over","input":{"sku":"mug","quantity":30},"expected":{"behaviour":"answer","canFulfil":false,"maxToolCalls":2},"tags":["tool-failure"]}
+{"id":"service-down","input":{"sku":"sofa","quantity":1},"expected":{"behaviour":"abstain","maxToolCalls":3},"tags":["tool-failure","should-abstain"]}

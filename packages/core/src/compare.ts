@@ -41,7 +41,9 @@ export interface EvaluatorComparison {
   onlyA: string[];
   onlyB: string[];
   neither: string[];
-  /** A side was not applicable, or the evaluator itself failed, so there is nothing to compare. */
+  /** The evaluator does not apply to the case on either side. */
+  notApplicable: string[];
+  /** It applies on one side only, or the evaluator itself failed, so the sides cannot be compared. */
   undetermined: string[];
 }
 
@@ -116,7 +118,15 @@ export function compare(a: RunData, b: RunData): Comparison {
   });
 
   const evaluators = evaluatorsOf(a).map((evaluator): EvaluatorComparison => {
-    const comparison: EvaluatorComparison = { ...evaluator, both: [], onlyA: [], onlyB: [], neither: [], undetermined: [] };
+    const comparison: EvaluatorComparison = {
+      ...evaluator,
+      both: [],
+      onlyA: [],
+      onlyB: [],
+      neither: [],
+      notApplicable: [],
+      undetermined: [],
+    };
     for (const c of cases) {
       comparison[bucket(c.a.verdicts[evaluator.id], c.b.verdicts[evaluator.id])].push(c.caseId);
     }
@@ -141,12 +151,13 @@ function comparedRun(run: RunData): ComparedRun {
   };
 }
 
-type Bucket = "both" | "onlyA" | "onlyB" | "neither" | "undetermined";
+type Bucket = "both" | "onlyA" | "onlyB" | "neither" | "notApplicable" | "undetermined";
 
 function bucket(a: Verdict["outcome"] | undefined, b: Verdict["outcome"] | undefined): Bucket {
   // A case that did not complete did not pass, so it counts like a fail here.
   const settled = (outcome: Verdict["outcome"] | undefined) =>
     outcome === "pass" || outcome === "fail" || outcome === "not_evaluated";
+  if (a === "not_applicable" && b === "not_applicable") return "notApplicable";
   if (!settled(a) || !settled(b)) return "undetermined";
   if (a === "pass") return b === "pass" ? "both" : "onlyA";
   return b === "pass" ? "onlyB" : "neither";

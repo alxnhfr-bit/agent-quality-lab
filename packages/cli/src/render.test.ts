@@ -59,7 +59,8 @@ test("a run is shown with its counts and every case behind a failure", () => {
       "",
       "evaluator    version  pass  fail  n/a  evaluator error  not evaluated",
       "correctness  1        1/3   1     0    0                1",
-      "style        2        0/3   0     1    1                1",
+      // style does not apply to case a, so it is judged on two cases, not three.
+      "style        2        0/2   0     1    1                1",
       "",
       "not completed",
       "  b  timeout after 20 ms",
@@ -156,7 +157,7 @@ test("a comparison shows both runs side by side, then where they differ", () => 
       "timeout           1              0",
       "fallbacks         0              1",
       "correctness pass  1/3            2/3",
-      "style pass        0/3            1/3",
+      "style pass        0/2            1/3",
       "median duration   3.00 ms        8.00 ms",
       "max duration      20 ms          12 ms",
       "tool calls        1 (0 failed)   2 (1 failed)",
@@ -167,7 +168,7 @@ test("a comparison shows both runs side by side, then where they differ", () => 
       // In A, style did not apply to case a and the evaluator failed on case c.
       "  style        cannot be compared (2)  a, c",
       "",
-      "cases that differ (2 of 3)",
+      "cases that differ in status or verdicts (2 of 3)",
       "  a  A  answer 2, 1 tool call",
       "     B  answer 2, 2 tool calls, fallback",
       "  b  A  timeout after 20 ms",
@@ -199,7 +200,7 @@ test("a run with tagged cases also shows its counts per tag", () => {
       [
         "",
         "tag   cases  completed  correctness pass  style pass",
-        "easy  2      1/2        1/2               0/2",
+        "easy  2      1/2        1/2               0/1",
         "slow  1      0/1        0/1               0/1",
         "",
       ].join("\n"),
@@ -216,12 +217,40 @@ test("a comparison shows both sides per tag", () => {
     text.includes(
       [
         "",
-        "tag   cases  completed A / B  correctness pass A / B  style pass A / B",
-        "easy  2      1 / 2            1 / 2                   0 / 1",
-        "slow  1      0 / 1            0 / 1                   0 / 0",
+        "tag   cases  completed A · B  correctness pass A · B  style pass A · B",
+        "easy  2      1/2 · 2/2        1/2 · 2/2               0/1 · 1/2",
+        "slow  1      0/1 · 1/1        0/1 · 1/1               0/1 · 0/1",
         "",
       ].join("\n"),
     ),
     text,
   );
+});
+
+test("cases that differ only in wording or lookups are named, not spelled out", () => {
+  const reworded: RunData = {
+    ...other,
+    cases,
+    results: results.map((result) =>
+      result.status === "completed" ? { ...result, output: { kind: "answer", value: "worded differently" } } : result,
+    ),
+    evaluations,
+  };
+  const first: RunData = { manifest, cases, results, evaluations };
+  const text = renderComparison(compare(first, reworded), first, reworded);
+  assert.match(text, /\nno case differs in status or verdicts\n/);
+  assert.ok(text.endsWith("\nsame verdicts, different output or tool calls (2)\n  a, c"), text);
+});
+
+test("a check that applies to no case in a tag shows as not applicable, not as zero passes", () => {
+  const onlyStyle = evaluations.filter((record) => record.evaluator.id === "style" && record.caseId === "a");
+  const one = results.slice(0, 1);
+  const text = renderRun({
+    manifest,
+    results: one,
+    evaluations: onlyStyle,
+    summary: summarize(one, onlyStyle, [{ id: "a", tags: ["easy"] }]),
+  });
+  assert.match(text, /\nstyle      2        n\/a   0     1    0                0\n/);
+  assert.match(text, /\neasy  1      1\/1        n\/a$/);
 });

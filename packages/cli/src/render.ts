@@ -1,13 +1,14 @@
 /** Turns a run and its summary into text. Formatting only: nothing here counts or scores. */
-import type {
-  CaseResult,
-  CaseSide,
-  Comparison,
-  EvaluationRecord,
-  Manifest,
-  RunData,
-  RunSummary,
-  SliceSummary,
+import {
+  passRate,
+  type CaseComparison,
+  type CaseResult,
+  type CaseSide,
+  type Comparison,
+  type EvaluationRecord,
+  type Manifest,
+  type RunData,
+  type RunSummary,
 } from "@agent-quality-lab/core";
 
 export interface RunReport {
@@ -57,7 +58,7 @@ export function renderRun({ manifest, results, evaluations, summary, notes = [] 
         ...summary.evaluators.map((e) => [
           e.id,
           e.version,
-          `${e.pass.length}/${summary.cases}`,
+          share(passRate(summary, e.id)),
           String(e.fail.length),
           String(e.notApplicable.length),
           String(e.error.length),
@@ -76,7 +77,7 @@ export function renderRun({ manifest, results, evaluations, summary, notes = [] 
           tag.tag,
           String(tag.cases),
           `${tag.byStatus.completed.length}/${tag.cases}`,
-          ...summary.evaluators.map((e) => `${passes(tag, e.id)}/${tag.cases}`),
+          ...summary.evaluators.map((e) => share(passRate(tag, e.id))),
         ]),
       ]),
     );
@@ -124,7 +125,7 @@ export function renderComparison(comparison: Comparison, a: RunData, b: RunData)
     row("timeout", (s) => String(s.byStatus.timeout.length)),
     row("fallbacks", (s) => String(s.fallbacks.length)),
     ...comparison.evaluators.map(({ id }) =>
-      row(`${id} pass`, (s) => `${s.evaluators.find((e) => e.id === id)?.pass.length ?? 0}/${s.cases}`),
+      row(`${id} pass`, (s) => share(passRate(s, id))),
     ),
     row("median duration", (s) => (s.durationMs ? ms(s.durationMs.median) : "-")),
     row("max duration", (s) => (s.durationMs ? ms(s.durationMs.max) : "-")),
@@ -137,17 +138,17 @@ export function renderComparison(comparison: Comparison, a: RunData, b: RunData)
 
   const tagsB = new Map(comparison.b.summary.byTag.map((tag) => [tag.tag, tag]));
   if (comparison.a.summary.byTag.length > 0) {
-    const pair = (a: number, b: number) => `${a} / ${b}`;
+    const pair = (a: string, b: string) => (a === "n/a" && b === "n/a" ? "n/a" : `${a} · ${b}`);
     lines.push(
       ...table([
-        ["tag", "cases", "completed A / B", ...comparison.evaluators.map((e) => `${e.id} pass A / B`)],
+        ["tag", "cases", "completed A · B", ...comparison.evaluators.map((e) => `${e.id} pass A · B`)],
         ...comparison.a.summary.byTag.map((tagA) => {
           const tagB = tagsB.get(tagA.tag)!;
           return [
             tagA.tag,
             String(tagA.cases),
-            pair(tagA.byStatus.completed.length, tagB.byStatus.completed.length),
-            ...comparison.evaluators.map((e) => pair(passes(tagA, e.id), passes(tagB, e.id))),
+            pair(`${tagA.byStatus.completed.length}/${tagA.cases}`, `${tagB.byStatus.completed.length}/${tagB.cases}`),
+            ...comparison.evaluators.map((e) => pair(share(passRate(tagA, e.id)), share(passRate(tagB, e.id)))),
           ];
         }),
       ]),
@@ -173,21 +174,42 @@ export function renderComparison(comparison: Comparison, a: RunData, b: RunData)
   }
 
   const [resultsA, resultsB] = [a, b].map((run) => new Map(run.results.map((result) => [result.caseId, result])));
-  const differing = cases.filter((c) => c.differences.length > 0);
-  if (differing.length === 0) {
+  // A different status or verdict is a difference in how well the sides did. Different wording
+  // or a different number of lookups with the same verdicts is listed, but not spelled out.
+  const differing = cases.filter(differsInResult);
+  const minor = cases.filter((c) => c.differences.length > 0 && !differsInResult(c));
+  if (differing.length === 0 && minor.length === 0) {
     lines.push("", "no case differs in status, output, verdicts or tool calls");
+  } else if (differing.length === 0) {
+    lines.push("", "no case differs in status or verdicts");
   } else {
     const sides = differing.flatMap((c) => [
       [c.caseId, "A", describeSide(resultsA!.get(c.caseId)!, c.a)],
       ["", "B", describeSide(resultsB!.get(c.caseId)!, c.b)],
     ]);
-    lines.push("", `cases that differ (${differing.length} of ${cases.length})`, ...indent(table(sides)));
+    lines.push(
+      "",
+      `cases that differ in status or verdicts (${differing.length} of ${cases.length})`,
+      ...indent(table(sides)),
+    );
+  }
+  if (minor.length > 0) {
+    lines.push(
+      "",
+      `same verdicts, different output or tool calls (${minor.length})`,
+      `  ${minor.map((c) => c.caseId).join(", ")}`,
+    );
   }
   return lines.join("\n");
 }
 
-function passes(summary: SliceSummary, evaluatorId: string): number {
-  return summary.evaluators.find((e) => e.id === evaluatorId)?.pass.length ?? 0;
+/** A pass count out of the cases the evaluator applies to. */
+export function share({ pass, of }: { pass: number; of: number }): string {
+  return of === 0 ? "n/a" : `${pass}/${of}`;
+}
+
+export function differsInResult(c: CaseComparison): boolean {
+  return c.differences.includes("status") || c.differences.includes("verdicts");
 }
 
 function describeSide(result: CaseResult, side: CaseSide): string {
@@ -201,9 +223,14 @@ function describeSide(result: CaseResult, side: CaseSide): string {
     Object.entries(side.verdicts)
       .filter(([, o]) => o === outcome)
       .map(([id]) => id);
-  if (withOutcome("fail").length > 0) parts.push(`fails ${withOutcome("fail").join(" and ")}`);
-  if (withOutcome("error").length > 0) parts.push(`evaluator error in ${withOutcome("error").join(" and ")}`);
+  if (withOutcome("fail").length > 0) parts.push(`fails ${listed(withOutcome("fail"))}`);
+  if (withOutcome("error").length > 0) parts.push(`evaluator error in ${listed(withOutcome("error"))}`);
   return parts.join(", ");
+}
+
+/** "a", "a and b", "a, b and c". */
+function listed(items: string[]): string {
+  return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
 
 function shorten(text: string): string {

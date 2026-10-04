@@ -107,7 +107,7 @@ test("every case is listed, with both sides and its input", () => {
 
 test("a case's setup is shown, marked as hidden from the candidate", () => {
   assert.equal(page.match(/Setup, hidden from the candidate/g)?.length, 1);
-  assert.match(page, /<p class="label">Setup, hidden from the candidate<\/p><pre>\{\n  &#34;secret&#34;: &#34;&#60;script&#62;/);
+  assert.match(page, /<details class="setup"><summary>Setup, hidden from the candidate<\/summary><pre>\{\n  &#34;secret&#34;: &#34;&#60;script&#62;/);
   assert.ok(page.includes("31337"));
 });
 
@@ -127,6 +127,7 @@ test("each count filters the list to exactly the cases behind it", () => {
   assert.deepEqual(casesBehind("correct, B: not evaluated"), [HOSTILE_ID, "plain"]);
   assert.deepEqual(casesBehind("All"), [HOSTILE_ID, "plain"]);
   assert.deepEqual(casesBehind("Not completed on a side"), [HOSTILE_ID, "plain"]);
+  assert.deepEqual(casesBehind("Differ in status or verdicts"), [HOSTILE_ID, "plain"]);
 });
 
 test("a count of zero is plain text, not a filter", () => {

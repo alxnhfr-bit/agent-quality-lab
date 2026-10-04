@@ -303,7 +303,7 @@ details.case[hidden] {
   display: none;
 }
 
-summary {
+.case > summary {
   display: grid;
   grid-template-columns: minmax(150px, 1fr) minmax(0, 2fr) minmax(0, 2fr);
   gap: 6px 16px;
@@ -313,7 +313,7 @@ summary {
   list-style: none;
 }
 
-summary::-webkit-details-marker {
+.case > summary::-webkit-details-marker {
   display: none;
 }
 
@@ -409,6 +409,27 @@ details[open] > summary .case-id::before {
   margin-bottom: 16px;
 }
 
+/* The setup can be long, so it stays folded until asked for. */
+.setup {
+  grid-column: 1 / -1;
+}
+
+.setup > summary {
+  width: fit-content;
+  padding: 2px 6px;
+  margin-left: -6px;
+  border-radius: 4px;
+  color: var(--ink-2);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.setup > pre {
+  margin-top: 6px;
+}
+
 .block {
   margin-top: 12px;
 }
@@ -464,7 +485,7 @@ ol.trace {
 }
 
 @media (max-width: 720px) {
-  summary {
+  .case > summary {
     grid-template-columns: 1fr;
   }
 }

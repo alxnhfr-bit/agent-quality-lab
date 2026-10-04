@@ -72,8 +72,31 @@ const b = run("second", [
 
 test("each evaluator's cases are split by the side it passed on", () => {
   assert.deepEqual(compare(a, b).evaluators, [
-    { id: "correct", version: "1", both: ["a", "f"], onlyA: ["b"], onlyB: ["c"], neither: ["d"], undetermined: ["e"] },
+    {
+      id: "correct",
+      version: "1",
+      both: ["a", "f"],
+      onlyA: ["b"],
+      onlyB: ["c"],
+      neither: ["d"],
+      notApplicable: ["e"],
+      undetermined: [],
+    },
   ]);
+});
+
+test("a check that applies on one side only, or failed itself, cannot be compared", () => {
+  const mixed = run("second", [
+    [answer("a", 1), "not_applicable"],
+    [answer("b", 9), "error"],
+    [answer("c", 4), "pass"],
+    [{ caseId: "d", status: "error", error: { message: "boom" }, durationMs: 1, trace: [] }, "not_evaluated"],
+    [abstain("e", "no idea"), "pass"],
+    [answer("f", { y: [2], x: 1 }, 2), "pass"],
+  ]);
+  const [correct] = compare(a, mixed).evaluators;
+  assert.deepEqual(correct?.undetermined, ["a", "b", "e"]);
+  assert.deepEqual(correct?.notApplicable, []);
 });
 
 test("each case lists what observably differs between the sides", () => {

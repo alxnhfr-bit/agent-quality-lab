@@ -7,21 +7,23 @@
  * escapes every interpolated value, so markup can only come from this file.
  */
 import { readFileSync } from "node:fs";
-import type {
-  CaseComparison,
-  CaseResult,
-  CaseSide,
-  Comparison,
-  DatasetCase,
-  EvaluationRecord,
-  Manifest,
-  RunData,
-  RunSummary,
-  TagSummary,
-  TraceEvent,
-  Verdict,
+import {
+  passRate,
+  type CaseComparison,
+  type CaseResult,
+  type CaseSide,
+  type Comparison,
+  type DatasetCase,
+  type EvaluationRecord,
+  type Manifest,
+  type RunData,
+  type RunSummary,
+  type SliceSummary,
+  type TagSummary,
+  type TraceEvent,
+  type Verdict,
 } from "@agent-quality-lab/core";
-import { ms } from "../render.ts";
+import { differsInResult, ms, share } from "../render.ts";
 
 export interface HtmlReport {
   comparison: Comparison;
@@ -164,7 +166,7 @@ function summarySection(comparison: Comparison): Markup {
         return html`<tr class="${i === sides.length - 1 && "group-end"}">
         ${i === 0 && html`<th scope="rowgroup" rowspan="${sides.length}">${evaluator.id} <small>v${evaluator.version}</small></th>`}
         <td><span class="side">${side}</span></td>
-        <td>${meter(e.pass.length, total)}${count(e.pass, `${name}: pass`, `${e.pass.length}/${total}`)}</td>
+        <td>${passCell(summary, e.id, e.pass, `${name}: pass`, true)}</td>
         <td>${count(e.fail, `${name}: fail`)}</td>
         <td>${count(e.notEvaluated, `${name}: not evaluated`)}</td>
         <td>${count(e.notApplicable, `${name}: not applicable`)}</td>
@@ -208,13 +210,20 @@ function tagSection(comparison: Comparison): Markup | false {
         <td>${count(tag.byStatus.completed, `${name}: completed`, `${tag.byStatus.completed.length}/${tag.cases}`)}</td>
         ${comparison.evaluators.map((evaluator) => {
           const pass = tag.evaluators.find((e) => e.id === evaluator.id)?.pass ?? [];
-          return html`<td>${count(pass, `${name}, ${evaluator.id}: pass`, `${pass.length}/${tag.cases}`)}</td>`;
+          return html`<td>${passCell(tag, evaluator.id, pass, `${name}, ${evaluator.id}: pass`, false)}</td>`;
         })}
       </tr>`;
       });
     })}</tbody>
   </table></div>
 </section>`;
+}
+
+/** A pass count out of the cases the evaluator applies to, or "n/a" when it applies to none. */
+function passCell(slice: SliceSummary, evaluatorId: string, pass: readonly string[], label: string, withMeter: boolean): Markup {
+  const rate = passRate(slice, evaluatorId);
+  if (rate.of === 0) return html`<span class="zero">n/a</span>`;
+  return html`${withMeter && meter(rate.pass, rate.of)}${count(pass, label, share(rate))}`;
 }
 
 function meter(part: number, whole: number): Markup {
@@ -226,7 +235,10 @@ function meter(part: number, whole: number): Markup {
 
 function casesSection(comparison: Comparison, a: RunData, b: RunData): Markup {
   const ids = comparison.cases.map((c) => c.caseId);
-  const differing = comparison.cases.filter((c) => c.differences.length > 0).map((c) => c.caseId);
+  const differing = comparison.cases.filter(differsInResult).map((c) => c.caseId);
+  const minor = comparison.cases
+    .filter((c) => c.differences.length > 0 && !differsInResult(c))
+    .map((c) => c.caseId);
   const incomplete = comparison.cases
     .filter((c) => c.a.status !== "completed" || c.b.status !== "completed")
     .map((c) => c.caseId);
@@ -244,7 +256,8 @@ function casesSection(comparison: Comparison, a: RunData, b: RunData): Markup {
   <h2>Cases</h2>
   <div class="filters">
     ${filter("All", ids, true)}
-    ${filter("Differ", differing)}
+    ${filter("Differ in status or verdicts", differing)}
+    ${minor.length > 0 && filter("Same verdicts, different output or tool calls", minor)}
     ${filter("Not completed on a side", incomplete)}
     <button class="filter" id="toggle-all" aria-pressed="false" hidden>Expand all</button>
     <span id="filter-status" role="status">All: ${ids.length} of ${ids.length} cases</span>
@@ -287,7 +300,7 @@ function caseEntry(c: CaseComparison, input: DatasetCase | undefined, sides: Sid
         }</div>
         ${
           input?.setup !== undefined &&
-          html`<div><p class="label">Setup, hidden from the candidate</p><pre>${json(input.setup)}</pre></div>`
+          html`<details class="setup"><summary>Setup, hidden from the candidate</summary><pre>${json(input.setup)}</pre></details>`
         }
       </div>
       <div class="columns">${sides.map(sideDetail)}</div>

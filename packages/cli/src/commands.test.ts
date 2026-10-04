@@ -71,8 +71,8 @@ test("compare shows where two stored runs differ, and refuses a run that is not 
   assert.match(output, /\nA  baseline v1    run .*_baseline\nB  mock-agent v1  run .*_mock-agent\n/);
   assert.match(output, /\ncorrectness pass  12\/12 +6\/12\n/);
   assert.match(output, /\n  correctness  passes only in A \(6\)  in-stock, small-exact, small-one-over, unknown-item, flaky-lookup-over, service-down\n/);
-  assert.match(output, /\ncases that differ \(8 of 12\)\n/);
-  assert.match(output, /\ntool-failure +3 +3 \/ 3 +3 \/ 1 +3 \/ 0\n/);
+  assert.match(output, /\ncases that differ in status or verdicts \(8 of 12\)\n/);
+  assert.match(output, /\ntool-failure +3 +3\/3 · 3\/3 +3\/3 · 1\/3 +3\/3 · 0\/3\n/);
 
   await rm(join(p.runsDir, b, "evaluations.jsonl"));
   await assert.rejects(
@@ -105,7 +105,7 @@ test("mistakes in usage name what is available", async () => {
   const run = (args: Parameters<typeof runCommand>[1]) => runCommand(p, args, () => {});
   const usage = (message: RegExp) => (error: unknown) => error instanceof UsageError && message.test(error.message);
 
-  await assert.rejects(run({ scenario: "nope", candidate: "baseline" }), usage(/no scenario "nope" \(available: stock-check\)/));
+  await assert.rejects(run({ scenario: "nope", candidate: "baseline" }), usage(/no scenario "nope" \(available: .*stock-check.*\)/));
   await assert.rejects(
     run({ scenario: "stock-check", candidate: "nope" }),
     usage(/no candidate "nope" \(available: baseline, mock-agent\)/),

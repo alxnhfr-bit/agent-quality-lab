@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CaseResult, EvaluationRecord } from "./artifact.ts";
-import { summarize } from "./summary.ts";
+import { passRate, summarize } from "./summary.ts";
 
 const results: CaseResult[] = [
   {
@@ -130,4 +130,16 @@ test("the cases carrying a tag get the same counts as the whole run", () => {
 
 test("a run whose cases carry no tags has no breakdown", () => {
   assert.deepEqual(summarize(results, [], [{ id: "a" }, { id: "b" }]).byTag, []);
+});
+
+test("a pass count is out of the cases the evaluator applies to", () => {
+  const summary = summarize(results, [
+    record("a", "style", { outcome: "pass" }),
+    record("b", "style", { outcome: "not_applicable", detail: "no text" }),
+    record("c", "style", skipped),
+    record("d", "style", { outcome: "error", detail: "threw" }),
+  ]);
+  // Not applicable is left out. Not completed and an evaluator error are not passes, and still count.
+  assert.deepEqual(passRate(summary, "style"), { pass: 1, of: 3 });
+  assert.deepEqual(passRate(summary, "unknown"), { pass: 0, of: 0 });
 });

@@ -294,3 +294,54 @@ test("a candidate that cannot be recorded is rejected before any case runs", asy
   await assert.rejects(executeRun(scenario, counting, dataset, { environment }));
   assert.deepEqual(seen, []);
 });
+
+// --- A hidden setup per case ---------------------------------------------------
+
+type Question = { item: string };
+type World = { stock: number; lookupFails?: boolean };
+
+const worldScenario = {
+  outputSchema: z.strictObject({ stock: z.number() }),
+  timeoutMs: 20,
+  tools: (c: Case<Question, never, World>): Record<string, Tool> => ({
+    lookup: async () => {
+      if (c.setup!.lookupFails) throw new Error("unavailable");
+      return c.setup!.stock;
+    },
+  }),
+};
+const askingTheTool: Pick<Candidate<Question, { stock: number }>, "run"> = {
+  run: async (_input, ctx) => ({ kind: "answer", value: { stock: (await ctx.tools.lookup!(null)) as number } }),
+};
+
+test("each case's tools answer from that case's own setup", async () => {
+  const stockOf = async (setup: World) => {
+    const result = await runCase(worldScenario, askingTheTool, { id: "c", input: { item: "kettle" }, setup });
+    return result.status === "completed" && result.output.kind === "answer" ? result.output.value : result.status;
+  };
+  assert.deepEqual(await stockOf({ stock: 3 }), { stock: 3 });
+  assert.deepEqual(await stockOf({ stock: 40 }), { stock: 40 });
+  assert.equal(await stockOf({ stock: 3, lookupFails: true }), "error");
+});
+
+test("the candidate is given the input and nothing else of the case", async () => {
+  const received: unknown[][] = [];
+  const result = await runCase(
+    worldScenario,
+    {
+      run: async (...args: unknown[]) => {
+        received.push(args);
+        return { kind: "abstain", reason: "did not look" };
+      },
+    },
+    { id: "c", input: { item: "kettle" }, expected: undefined as never, setup: { stock: 31337 } },
+  );
+
+  assert.equal(received.length, 1);
+  const [input, ctx, ...rest] = received[0]!;
+  assert.deepEqual(input, { item: "kettle" });
+  assert.deepEqual(Object.keys(ctx as object).sort(), ["report", "signal", "tools"]);
+  assert.deepEqual(rest, []);
+  // It did not look anything up, so the hidden fact appears nowhere in what was recorded.
+  assert.equal(JSON.stringify(result).includes("31337"), false);
+});

@@ -53,6 +53,31 @@ test("an invalid line fails the whole dataset and names the line", () => {
   }
 });
 
+test("a case's setup is checked against the scenario's setup schema", () => {
+  const withSetup = { ...schemas, setupSchema: z.strictObject({ stock: z.number() }) };
+  const line = '{"id":"a","input":{"n":1},"setup":{"stock":3}}';
+
+  assert.deepEqual(parseDataset(withSetup, "dev", line).cases, [{ id: "a", input: { n: 1 }, setup: { stock: 3 } }]);
+  assert.throws(
+    () => parseDataset(withSetup, "dev", '{"id":"a","input":{"n":1},"setup":{"stock":"three"}}'),
+    /line 1: setup is invalid/,
+  );
+  // The scenario requires a setup, so a case without one is refused too.
+  assert.throws(() => parseDataset(withSetup, "dev", '{"id":"a","input":{"n":1}}'), /line 1: setup is invalid/);
+});
+
+test("a setup is refused when the scenario does not define one", () => {
+  assert.throws(
+    () => parseDataset(schemas, "dev", '{"id":"a","input":{"n":1},"setup":{"stock":3}}'),
+    /line 1: the case has a setup, but the scenario does not define one/,
+  );
+});
+
+test("a scenario may make the setup optional", () => {
+  const optional = { ...schemas, setupSchema: z.strictObject({ stock: z.number() }).optional() };
+  assert.deepEqual(parseDataset(optional, "dev", '{"id":"a","input":{"n":1}}').cases, [{ id: "a", input: { n: 1 } }]);
+});
+
 test("asking for a dataset the scenario does not have lists the ones it has", async () => {
   const scenario = { ...schemas, id: "demo", datasets: { dev: new URL("file:///nowhere.jsonl") } };
   await assert.rejects(loadDataset(scenario, "held-out"), /no dataset "held-out" \(available: dev\)/);

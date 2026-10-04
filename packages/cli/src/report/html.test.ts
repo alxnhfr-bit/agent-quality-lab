@@ -65,7 +65,7 @@ const b = run("second", [
   [{ caseId: "plain", status: "malformed_output", problem: HOSTILE, rawOutput: HOSTILE, durationMs: 1, trace: [] }, skipped],
 ]);
 const cases: DatasetCase[] = [
-  { id: HOSTILE_ID, input: { q: HOSTILE }, expected: HOSTILE, tags: [HOSTILE] },
+  { id: HOSTILE_ID, input: { q: HOSTILE }, expected: HOSTILE, setup: { secret: HOSTILE, stock: 31337 }, tags: [HOSTILE] },
   { id: "plain", input: 1 },
 ];
 
@@ -102,6 +102,12 @@ test("every case is listed, with both sides and its input", () => {
   assert.match(page, /<details class="case" data-case="plain">/);
   assert.match(page, /<p class="label">Input<\/p><pre>1<\/pre>/);
   assert.match(page, /differs in status, verdicts, tool calls/);
+});
+
+test("a case's setup is shown, marked as hidden from the candidate", () => {
+  assert.equal(page.match(/Setup, hidden from the candidate/g)?.length, 1);
+  assert.match(page, /<p class="label">Setup, hidden from the candidate<\/p><pre>\{\n  &#34;secret&#34;: &#34;&#60;script&#62;/);
+  assert.ok(page.includes("31337"));
 });
 
 test("each count filters the list to exactly the cases behind it", () => {

@@ -21,7 +21,10 @@ import {
 import type { Run } from "./runner.ts";
 import type { Case, Dataset, Scenario } from "./types.ts";
 
-type DatasetSchemas<I, E> = Pick<Scenario<I, unknown, E>, "inputSchema" | "expectedSchema">;
+type DatasetSchemas<I, E, S> = Pick<
+  Scenario<I, unknown, E, S>,
+  "inputSchema" | "expectedSchema" | "setupSchema"
+>;
 
 export interface StoredRun {
   dir: string;
@@ -37,10 +40,10 @@ export interface StoredRun {
 
 // --- Datasets ----------------------------------------------------------------
 
-export async function loadDataset<I, E>(
-  scenario: DatasetSchemas<I, E> & Pick<Scenario<I, unknown, E>, "id" | "datasets">,
+export async function loadDataset<I, E, S>(
+  scenario: DatasetSchemas<I, E, S> & Pick<Scenario<I, unknown, E, S>, "id" | "datasets">,
   name: string,
-): Promise<Dataset<I, E>> {
+): Promise<Dataset<I, E, S>> {
   const location = scenario.datasets[name];
   if (!location) {
     const available = Object.keys(scenario.datasets).join(", ");
@@ -50,11 +53,11 @@ export async function loadDataset<I, E>(
 }
 
 /** Parses JSONL with one case per line. Any invalid line fails the whole dataset. */
-export function parseDataset<I, E>(
-  scenario: DatasetSchemas<I, E>,
+export function parseDataset<I, E, S>(
+  scenario: DatasetSchemas<I, E, S>,
   name: string,
   text: string,
-): Dataset<I, E> {
+): Dataset<I, E, S> {
   const seen = new Set<string>();
   const cases = parseJsonl(text, datasetCaseSchema, `dataset "${name}"`, (record, where) => {
     if (seen.has(record.id)) throw new Error(`${where}: duplicate case id "${record.id}"`);
@@ -62,12 +65,19 @@ export function parseDataset<I, E>(
 
     const input = scenario.inputSchema.safeParse(record.input);
     if (!input.success) throw new Error(`${where}: input is invalid: ${input.error.message}`);
-    const c: Case<I, E> = { id: record.id, input: input.data };
+    const c: Case<I, E, S> = { id: record.id, input: input.data };
 
     if (record.expected !== undefined) {
       const expected = scenario.expectedSchema.safeParse(record.expected);
       if (!expected.success) throw new Error(`${where}: expected is invalid: ${expected.error.message}`);
       c.expected = expected.data;
+    }
+    if (scenario.setupSchema) {
+      const setup = scenario.setupSchema.safeParse(record.setup);
+      if (!setup.success) throw new Error(`${where}: setup is invalid: ${setup.error.message}`);
+      if (setup.data !== undefined) c.setup = setup.data;
+    } else if (record.setup !== undefined) {
+      throw new Error(`${where}: the case has a setup, but the scenario does not define one`);
     }
     if (record.tags) c.tags = record.tags;
     return c;

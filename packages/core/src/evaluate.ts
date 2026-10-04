@@ -18,9 +18,9 @@ import type { Case, CompletedCase, Evaluator, Scenario } from "./types.ts";
 
 type Completed = Extract<CaseResult, { status: "completed" }>;
 
-export async function evaluateRun<I, O, E>(
-  scenario: Pick<Scenario<I, O, E>, "outputSchema" | "evaluators">,
-  cases: readonly Case<I, E>[],
+export async function evaluateRun<I, O, E, S>(
+  scenario: Pick<Scenario<I, O, E, S>, "outputSchema" | "evaluators">,
+  cases: readonly Case<I, E, S>[],
   results: readonly CaseResult[],
 ): Promise<EvaluationRecord[]> {
   const evaluators = scenario.evaluators.map((evaluator) => ({
@@ -67,9 +67,9 @@ function typed<O>(
 }
 
 /** An evaluator that throws or returns nonsense is recorded as its own failure, not the candidate's. */
-async function judge<I, O, E>(
-  evaluator: Evaluator<I, O, E>,
-  c: Case<I, E>,
+async function judge<I, O, E, S>(
+  evaluator: Evaluator<I, O, E, S>,
+  c: Case<I, E, S>,
   completed: CompletedCase<O>,
 ): Promise<Verdict> {
   try {

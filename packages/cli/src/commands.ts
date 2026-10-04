@@ -35,7 +35,7 @@ export interface Project {
   runsDir: string;
 }
 
-type AnyScenario = Scenario<unknown, unknown, unknown>;
+type AnyScenario = Scenario<unknown, unknown, unknown, unknown>;
 type AnyCandidate = Candidate<unknown, unknown>;
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;

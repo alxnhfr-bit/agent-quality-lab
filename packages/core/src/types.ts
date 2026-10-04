@@ -5,6 +5,7 @@
  *   I  input a case hands to the candidate
  *   O  value a candidate returns when it answers
  *   E  ground truth, in whatever shape the scenario's evaluators need
+ *   S  the hidden facts of a case, for scenarios whose tools depend on the case
  */
 import type { JsonValue, Judgment, TraceEvent } from "./artifact.ts";
 
@@ -15,22 +16,29 @@ export interface Schema<T> {
   ): { success: true; data: T } | { success: false; error: { message: string } };
 }
 
-export interface Case<I, E> {
+export interface Case<I, E, S = undefined> {
   /** Stable across dataset versions; runs are compared by joining on it. */
   id: string;
+  /** All the candidate is given. Anything else it learns, it learns through tools. */
   input: I;
   /** Absent when the case has no ground truth. */
   expected?: E;
+  /**
+   * The world of this case: its facts, and what goes wrong in it. The scenario
+   * builds the case's tools from it and evaluators may read it. The candidate
+   * never receives it.
+   */
+  setup?: S;
   tags?: string[];
 }
 
-export interface Dataset<I, E> {
+export interface Dataset<I, E, S = undefined> {
   name: string;
   /** Hash of `text`. */
   sha256: string;
   /** The file exactly as read; snapshotted into every run that uses it. */
   text: string;
-  cases: Case<I, E>[];
+  cases: Case<I, E, S>[];
 }
 
 /** Abstaining is a legitimate result, distinct from failing to produce one. */
@@ -77,24 +85,26 @@ export interface CompletedCase<O> {
 }
 
 /** Judges one aspect of a completed case against an expectation. */
-export interface Evaluator<I, O, E> {
+export interface Evaluator<I, O, E, S = undefined> {
   id: string;
   /** Change it whenever the judgment changes, so old and new verdicts are not mixed. */
   version: string;
-  evaluate(c: Case<I, E>, completed: CompletedCase<O>): Judgment | Promise<Judgment>;
+  evaluate(c: Case<I, E, S>, completed: CompletedCase<O>): Judgment | Promise<Judgment>;
 }
 
-export interface Scenario<I, O, E> {
+export interface Scenario<I, O, E, S = undefined> {
   id: string;
   version: string;
   inputSchema: Schema<I>;
   outputSchema: Schema<O>;
   expectedSchema: Schema<E>;
+  /** Required for a scenario whose cases carry a setup; a dataset with setups is refused without it. */
+  setupSchema?: Schema<S>;
   /** Dataset name → JSONL file with one case per line. */
   datasets: Record<string, URL>;
   /** Built fresh for each case so state never leaks between cases. */
-  tools?(c: Case<I, E>): Record<string, Tool>;
-  evaluators: Evaluator<I, O, E>[];
+  tools?(c: Case<I, E, S>): Record<string, Tool>;
+  evaluators: Evaluator<I, O, E, S>[];
   /** Per-case time limit. Recorded in the manifest. */
   timeoutMs: number;
 }

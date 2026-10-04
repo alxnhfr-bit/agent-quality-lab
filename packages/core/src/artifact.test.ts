@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { z } from "zod";
 import {
   caseResultSchema,
+  datasetCaseSchema,
   evaluationRecordSchema,
   judgmentSchema,
   manifestSchema,
@@ -100,6 +101,12 @@ test("a manifest parses, and one from another schema version does not", () => {
 
 test("unknown fields are rejected rather than dropped", () => {
   assert.equal(manifestSchema.safeParse({ ...manifest, model: "x" }).success, false);
+});
+
+test("a dataset case may carry a setup next to its input and expectation", () => {
+  const c = { id: "c1", input: { sku: "a" }, expected: { n: 1 }, setup: { stock: 3 }, tags: ["easy"] };
+  assert.deepEqual(datasetCaseSchema.parse(c), c);
+  assert.equal(datasetCaseSchema.safeParse({ ...c, world: {} }).success, false);
 });
 
 test("a zod schema can be used wherever a Schema is expected", () => {

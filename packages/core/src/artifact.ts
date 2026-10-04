@@ -163,8 +163,12 @@ export const evaluationRecordSchema = z.strictObject({
 
 export const datasetCaseSchema = z.strictObject({
   id,
+  /** What the candidate is given. */
   input: jsonSchema,
+  /** What the evaluators compare the result against. */
   expected: jsonSchema.optional(),
+  /** The facts of this case that tools and evaluators can see and the candidate cannot. */
+  setup: jsonSchema.optional(),
   tags: z.array(z.string()).optional(),
 });
 

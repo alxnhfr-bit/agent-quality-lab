@@ -115,3 +115,18 @@ test("mislabelled evaluators and results for unknown cases are refused", async (
   await assert.rejects(run([{ ...doubles, id: "not a slug" }], []));
   await assert.rejects(run([doubles], [answered("z", { n: 1 })]), /case "z", which is not in the dataset/);
 });
+
+test("an evaluator can read the case's setup", async () => {
+  const matchesWorld: Evaluator<In, Out, Out, { truth: number }> = {
+    id: "matches-world",
+    version: "1",
+    evaluate: (c, { output }) => ({
+      outcome: output.kind === "answer" && output.value.n === c.setup?.truth ? "pass" : "fail",
+    }),
+  };
+  const withSetup: Case<In, Out, { truth: number }>[] = [{ id: "a", input: { n: 1 }, setup: { truth: 5 } }];
+  const [right] = await evaluateRun({ outputSchema, evaluators: [matchesWorld] }, withSetup, [answered("a", { n: 5 })]);
+  const [wrong] = await evaluateRun({ outputSchema, evaluators: [matchesWorld] }, withSetup, [answered("a", { n: 6 })]);
+  assert.equal(right?.verdict.outcome, "pass");
+  assert.equal(wrong?.verdict.outcome, "fail");
+});

@@ -44,10 +44,10 @@ type Settled =
 
 const defaultClock: Clock = () => performance.now();
 
-export async function executeRun<I, O, E>(
-  scenario: Scenario<I, O, E>,
+export async function executeRun<I, O, E, S>(
+  scenario: Scenario<I, O, E, S>,
   candidate: Candidate<I, O>,
-  dataset: Dataset<I, E>,
+  dataset: Dataset<I, E, S>,
   options: RunOptions,
 ): Promise<Run> {
   const now = options.now ?? (() => new Date());
@@ -82,10 +82,10 @@ export async function executeRun<I, O, E>(
   return { manifest, results };
 }
 
-export async function runCase<I, O, E>(
-  scenario: Pick<Scenario<I, O, E>, "tools" | "outputSchema" | "timeoutMs">,
+export async function runCase<I, O, E, S>(
+  scenario: Pick<Scenario<I, O, E, S>, "tools" | "outputSchema" | "timeoutMs">,
   candidate: Pick<Candidate<I, O>, "run">,
-  c: Case<I, E>,
+  c: Case<I, E, S>,
   options: Pick<RunOptions, "clock" | "cleanStack"> = {},
 ): Promise<CaseResult> {
   const clock = options.clock ?? defaultClock;
@@ -112,7 +112,8 @@ export async function runCase<I, O, E>(
   const timeout = new Promise<Settled>((resolve) => {
     timer = setTimeout(() => resolve({ how: "timed_out" }), scenario.timeoutMs);
   });
-  // The candidate gets its own copy of the input, and a synchronous throw is caught like any other.
+  // The candidate gets its own copy of the input and nothing else of the case: what the case
+  // expects and its setup stay with the lab. A synchronous throw is caught like any other.
   const attempt: Promise<Settled> = (async () => candidate.run(structuredClone(c.input), ctx))().then(
     (value) => ({ how: "returned", value }),
     (error) => ({ how: "threw", error }),

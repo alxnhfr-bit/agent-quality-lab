@@ -245,6 +245,10 @@ function caseEntry(c: CaseComparison, input: DatasetCase | undefined, sides: Sid
         <div><p class="label">Expected</p>${
           input?.expected === undefined ? html`<p class="empty">none</p>` : html`<pre>${json(input.expected)}</pre>`
         }</div>
+        ${
+          input?.setup !== undefined &&
+          html`<div><p class="label">Setup, hidden from the candidate</p><pre>${json(input.setup)}</pre></div>`
+        }
       </div>
       <div class="columns">${sides.map(sideDetail)}</div>
     </div>

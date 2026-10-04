@@ -175,7 +175,6 @@ Engineering:
 
 - Cases run one at a time and results are written when the run finishes, so a crash during a run loses its results.
 - A candidate that exceeds the time limit is signalled to stop, not killed.
-- A scenario's tools behave the same way for every case. There is no hidden state per case, and failures cannot be injected per case.
 - `aql eval` replaces all of a run's evaluations.
 - A candidate's configuration cannot be changed from the command line.
 - The run format is at version 1 and may change.
@@ -188,9 +187,11 @@ The CLI finds scenarios and candidates by location:
 ```text
 scenarios/<scenario>/
   scenario.ts          default-exports the scenario; its id must match the directory name
-  datasets/*.jsonl     one case per line: id, input, optional expected and tags
+  datasets/*.jsonl     one case per line: id, input, and optionally expected, setup and tags
   candidates/<name>.ts default-exports a candidate
 ```
+
+A case can carry a `setup`: the facts of that one case, such as what a lookup returns or which service is down. The scenario builds the case's tools from it and evaluators can read it, but the candidate never receives it. The example scenario does not use one; its tools behave the same way for every case.
 
 [scenarios/stock-check](scenarios/stock-check) is a complete example. The contracts a scenario and a candidate implement are in [packages/core/src/types.ts](packages/core/src/types.ts), and the format of the run files is in [packages/core/src/artifact.ts](packages/core/src/artifact.ts).
 

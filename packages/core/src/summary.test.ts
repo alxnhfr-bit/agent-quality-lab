@@ -35,12 +35,15 @@ const record = (caseId: string, id: string, verdict: EvaluationRecord["verdict"]
   verdict,
 });
 
+const skipped: EvaluationRecord["verdict"] = { outcome: "not_evaluated", detail: "the case did not complete" };
+
 test("every count is the list of cases behind it", () => {
   const summary = summarize(results, [
     record("a", "correctness", { outcome: "pass" }),
     record("a", "style", { outcome: "not_applicable", detail: "no text" }),
     record("b", "correctness", { outcome: "fail" }),
     record("b", "style", { outcome: "error", detail: "threw" }),
+    ...["c", "d"].flatMap((caseId) => [record(caseId, "correctness", skipped), record(caseId, "style", skipped)]),
   ]);
   assert.deepEqual(summary, {
     cases: 4,
@@ -56,9 +59,12 @@ test("every count is the list of cases behind it", () => {
   });
 });
 
-test("cases that did not complete are counted as not evaluated, not left out", () => {
-  const [correctness] = summarize(results, [record("a", "correctness", { outcome: "pass" })]).evaluators;
-  assert.deepEqual(correctness?.notEvaluated, ["b", "c", "d"]);
+test("an evaluator is listed even when it judged no case at all", () => {
+  const failed = results.slice(2);
+  const evaluations = failed.map((result) => record(result.caseId, "correctness", skipped));
+  assert.deepEqual(summarize(failed, evaluations).evaluators, [
+    { id: "correctness", version: "1", pass: [], fail: [], notApplicable: [], error: [], notEvaluated: ["c", "d"] },
+  ]);
 });
 
 test("two versions of an evaluator are kept apart", () => {

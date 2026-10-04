@@ -6,7 +6,7 @@
  *   O  value a candidate returns when it answers
  *   E  ground truth, in whatever shape the scenario's evaluators need
  */
-import type { JsonValue, TraceEvent, Verdict } from "./artifact.ts";
+import type { JsonValue, Judgment, TraceEvent } from "./artifact.ts";
 
 /** Anything with a zod-compatible `safeParse`, so scenarios are not tied to one validator. */
 export interface Schema<T> {
@@ -81,7 +81,7 @@ export interface Evaluator<I, O, E> {
   id: string;
   /** Change it whenever the judgment changes, so old and new verdicts are not mixed. */
   version: string;
-  evaluate(c: Case<I, E>, completed: CompletedCase<O>): Verdict | Promise<Verdict>;
+  evaluate(c: Case<I, E>, completed: CompletedCase<O>): Judgment | Promise<Judgment>;
 }
 
 export interface Scenario<I, O, E> {

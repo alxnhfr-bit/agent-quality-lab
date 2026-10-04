@@ -2,13 +2,14 @@
  * Scores the results of a run. Kept apart from execution so a run can be
  * re-scored later without running the candidate again.
  *
- * Only completed cases are judged. A case that errored, timed out or returned
- * something malformed gets no evaluation records at all, so no evaluator can
- * turn it into a pass or leave it out of the count.
+ * There is one record per case and evaluator. Only completed cases are judged:
+ * a case that errored, timed out or returned something malformed is never shown
+ * to an evaluator and is recorded as not_evaluated, so no evaluator can turn it
+ * into a pass or leave it out of the count.
  */
 import {
   evaluationRecordSchema,
-  verdictSchema,
+  judgmentSchema,
   type CaseResult,
   type EvaluationRecord,
   type Verdict,
@@ -34,16 +35,19 @@ export async function evaluateRun<I, O, E>(
   const casesById = new Map(cases.map((c) => [c.id, c]));
   const records: EvaluationRecord[] = [];
   for (const result of results) {
-    if (result.status !== "completed") continue;
     const c = casesById.get(result.caseId);
     if (!c) throw new Error(`there is a result for case "${result.caseId}", which is not in the dataset`);
 
-    const completed = typed(scenario.outputSchema, result);
+    const completed = result.status === "completed" ? typed(scenario.outputSchema, result) : null;
     for (const { evaluator, label } of evaluators) {
-      const verdict: Verdict =
-        "problem" in completed
-          ? { outcome: "error", detail: completed.problem }
-          : await judge(evaluator, c, completed);
+      let verdict: Verdict;
+      if (completed === null) {
+        verdict = { outcome: "not_evaluated", detail: `the case did not complete (${result.status})` };
+      } else if ("problem" in completed) {
+        verdict = { outcome: "error", detail: completed.problem };
+      } else {
+        verdict = await judge(evaluator, c, completed);
+      }
       records.push({ caseId: c.id, evaluator: label, verdict });
     }
   }
@@ -69,9 +73,9 @@ async function judge<I, O, E>(
   completed: CompletedCase<O>,
 ): Promise<Verdict> {
   try {
-    const verdict = verdictSchema.safeParse(await evaluator.evaluate(c, completed));
-    return verdict.success
-      ? verdict.data
+    const judgment = judgmentSchema.safeParse(await evaluator.evaluate(c, completed));
+    return judgment.success
+      ? judgment.data
       : { outcome: "error", detail: "the evaluator returned an invalid verdict" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

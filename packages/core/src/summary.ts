@@ -27,7 +27,7 @@ export interface EvaluatorSummary {
   notApplicable: string[];
   /** The evaluator itself failed on these cases. */
   error: string[];
-  /** Cases the evaluator never saw because they did not complete. They are not passes. */
+  /** Cases without a judgment, because they did not complete. They are not passes. */
   notEvaluated: string[];
 }
 
@@ -36,6 +36,7 @@ const BUCKET = {
   fail: "fail",
   not_applicable: "notApplicable",
   error: "error",
+  not_evaluated: "notEvaluated",
 } as const;
 
 export function summarize(results: readonly CaseResult[], evaluations: readonly EvaluationRecord[]): RunSummary {
@@ -67,10 +68,6 @@ export function summarize(results: readonly CaseResult[], evaluations: readonly 
       evaluators.set(key, { ...evaluator, pass: [], fail: [], notApplicable: [], error: [], notEvaluated: [] });
     }
     evaluators.get(key)![BUCKET[verdict.outcome]].push(caseId);
-  }
-  for (const summary of evaluators.values()) {
-    const seen = new Set([...summary.pass, ...summary.fail, ...summary.notApplicable, ...summary.error]);
-    summary.notEvaluated = results.map((result) => result.caseId).filter((caseId) => !seen.has(caseId));
   }
 
   const durations = results.map((result) => result.durationMs).sort((a, b) => a - b);

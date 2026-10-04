@@ -38,7 +38,8 @@ const quick: Evaluator<In, Out, Out> = {
   evaluate: async (_c, { durationMs }) => ({ outcome: durationMs < 10 ? "pass" : "fail", value: durationMs }),
 };
 
-test("only completed cases are judged, once per evaluator, in case order", async () => {
+test("there is one record per case and evaluator, and only completed cases are judged", async () => {
+  const notEvaluated = { outcome: "not_evaluated", detail: "the case did not complete (timeout)" };
   const records = await evaluateRun({ outputSchema, evaluators: [doubles, quick] }, cases, [
     answered("a", { n: 2 }),
     timedOut("b"),
@@ -47,6 +48,8 @@ test("only completed cases are judged, once per evaluator, in case order", async
   assert.deepEqual(records, [
     { caseId: "a", evaluator: { id: "doubles", version: "1" }, verdict: { outcome: "pass" } },
     { caseId: "a", evaluator: { id: "quick", version: "2" }, verdict: { outcome: "pass", value: 1 } },
+    { caseId: "b", evaluator: { id: "doubles", version: "1" }, verdict: notEvaluated },
+    { caseId: "b", evaluator: { id: "quick", version: "2" }, verdict: notEvaluated },
     { caseId: "c", evaluator: { id: "doubles", version: "1" }, verdict: { outcome: "fail", detail: "expected 6" } },
     { caseId: "c", evaluator: { id: "quick", version: "2" }, verdict: { outcome: "pass", value: 1 } },
   ]);
@@ -67,8 +70,14 @@ test("an evaluator that throws is recorded as its own error and does not stop th
   );
 });
 
-test("a verdict that breaks the format is an evaluator error, never a pass", async () => {
-  for (const returned of [{ outcome: "great" }, { outcome: "not_applicable" }, undefined]) {
+test("a verdict an evaluator may not give is an evaluator error, never a pass", async () => {
+  const invalid = [
+    { outcome: "great" },
+    { outcome: "not_applicable" },
+    { outcome: "not_evaluated", detail: "skipped" },
+    undefined,
+  ];
+  for (const returned of invalid) {
     const sloppy: Evaluator<In, Out, Out> = { id: "sloppy", version: "1", evaluate: () => returned as never };
     const [record] = await evaluateRun({ outputSchema, evaluators: [sloppy] }, cases, [answered("a", { n: 2 })]);
     assert.deepEqual(record?.verdict, { outcome: "error", detail: "the evaluator returned an invalid verdict" });

@@ -2,7 +2,7 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { projectRoot } from "@agent-quality-lab/core/store";
-import { UsageError, evalCommand, runCommand } from "./commands.ts";
+import { UsageError, compareCommand, evalCommand, runCommand } from "./commands.ts";
 
 const USAGE = `Usage:
   aql run <scenario> --candidate <name> [--dataset <name>]
@@ -11,6 +11,10 @@ const USAGE = `Usage:
   aql eval <run>
       Score an existing run again with the scenario's current evaluators.
 
+  aql compare <run-a> <run-b>
+      Show where two runs of the same scenario and dataset differ, case by case.
+
+A run is named by its id (its directory name under runs/) or by a path.
 Scenarios live in scenarios/<scenario>/scenario.ts, candidates next to them in candidates/<name>.ts.`;
 
 async function main(argv: string[]): Promise<string> {
@@ -29,12 +33,16 @@ async function main(argv: string[]): Promise<string> {
     throw new UsageError(`${(error as Error).message}\n\n${USAGE}`);
   }
   const { values, positionals } = parsed;
-  const [command, target, ...extra] = positionals;
+  const [command, target, second, ...extra] = positionals;
   if (values.help || command === undefined) return USAGE;
 
   const root = projectRoot();
   const project = { root, runsDir: join(root, "runs") };
 
+  if (command === "compare" && target && second && extra.length === 0) {
+    return compareCommand(project, { a: target, b: second });
+  }
+  if (second !== undefined) throw new UsageError(USAGE);
   if (command === "run" && target && values.candidate && extra.length === 0) {
     return runCommand(
       project,

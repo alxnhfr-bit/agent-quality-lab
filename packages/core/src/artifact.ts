@@ -128,18 +128,29 @@ export const caseResultSchema = z.discriminatedUnion("status", [
 
 // --- Evaluations -----------------------------------------------------------
 
+const decided = z.strictObject({
+  outcome: z.enum(["pass", "fail"]),
+  /** A number behind the judgment, e.g. a count of unnecessary tool calls. */
+  value: z.number().optional(),
+  detail: z.string().optional(),
+});
+const undecided = z.strictObject({
+  /** "error" means the evaluator itself failed; it says nothing about the candidate. */
+  outcome: z.enum(["not_applicable", "error"]),
+  detail: z.string().min(1),
+});
+
+/** What an evaluator may conclude about a completed case. */
+export const judgmentSchema = z.discriminatedUnion("outcome", [decided, undecided]);
+
+/**
+ * A judgment, or the fact that there is none: a case that did not complete
+ * never reaches an evaluator and is recorded as not_evaluated. It is not a pass.
+ */
 export const verdictSchema = z.discriminatedUnion("outcome", [
-  z.strictObject({
-    outcome: z.enum(["pass", "fail"]),
-    /** A number behind the verdict, e.g. a count of unnecessary tool calls. */
-    value: z.number().optional(),
-    detail: z.string().optional(),
-  }),
-  z.strictObject({
-    /** "error" means the evaluator itself failed; it says nothing about the candidate. */
-    outcome: z.enum(["not_applicable", "error"]),
-    detail: z.string().min(1),
-  }),
+  decided,
+  undecided,
+  z.strictObject({ outcome: z.literal("not_evaluated"), detail: z.string().min(1) }),
 ]);
 
 export const evaluationRecordSchema = z.strictObject({
@@ -188,6 +199,7 @@ export const manifestSchema = z.strictObject({
 export type Usage = z.infer<typeof usageSchema>;
 export type TraceEvent = z.infer<typeof traceEventSchema>;
 export type CaseResult = z.infer<typeof caseResultSchema>;
+export type Judgment = z.infer<typeof judgmentSchema>;
 export type Verdict = z.infer<typeof verdictSchema>;
 export type EvaluationRecord = z.infer<typeof evaluationRecordSchema>;
 export type DatasetCase = z.infer<typeof datasetCaseSchema>;

@@ -1,5 +1,13 @@
 /** Turns a run and its summary into text. Formatting only: nothing here counts or scores. */
-import type { CaseResult, EvaluationRecord, Manifest, RunSummary } from "@agent-quality-lab/core";
+import type {
+  CaseResult,
+  CaseSide,
+  Comparison,
+  EvaluationRecord,
+  Manifest,
+  RunData,
+  RunSummary,
+} from "@agent-quality-lab/core";
 
 export interface RunReport {
   manifest: Manifest;
@@ -40,7 +48,7 @@ export function renderRun({ manifest, results, evaluations, summary, notes = [] 
   lines.push(...table(facts), "");
 
   if (summary.evaluators.length === 0) {
-    lines.push("no evaluations: either no case completed or the scenario has no evaluators");
+    lines.push("no evaluations: the run has no cases or the scenario has no evaluators");
   } else {
     lines.push(
       ...table([
@@ -71,6 +79,95 @@ export function renderRun({ manifest, results, evaluations, summary, notes = [] 
   if (failed.length > 0) lines.push("", "failed", ...indent(table(failed)));
 
   return lines.join("\n");
+}
+
+export function renderComparison(comparison: Comparison, a: RunData, b: RunData): string {
+  const { scenario, dataset, cases } = comparison;
+  const runs = [comparison.a, comparison.b];
+  const lines = [
+    `${scenario.id} v${scenario.version} · dataset ${dataset.name} · ${cases.length} cases`,
+    "",
+    ...table(runs.map((run, i) => ["AB"[i]!, `${run.candidate.id} v${run.candidate.version}`, `run ${run.runId}`])),
+    "",
+  ];
+
+  const sampled = [...new Set(runs.filter((run) => !run.candidate.deterministic).map((run) => run.candidate.id))];
+  if (sampled.length > 0) {
+    lines.push(
+      `note: not deterministic: ${sampled.join(", ")}. Each run is one sample, so a difference on a single case may be noise`,
+      "",
+    );
+  }
+
+  const row = (label: string, cell: (summary: RunSummary) => string) => [label, ...runs.map((run) => cell(run.summary))];
+  const rows = [
+    ["", "A", "B"],
+    row("completed", (s) => `${s.byStatus.completed.length}/${s.cases}`),
+    row("malformed output", (s) => String(s.byStatus.malformed_output.length)),
+    row("error", (s) => String(s.byStatus.error.length)),
+    row("timeout", (s) => String(s.byStatus.timeout.length)),
+    row("fallbacks", (s) => String(s.fallbacks.length)),
+    ...comparison.evaluators.map(({ id }) =>
+      row(`${id} pass`, (s) => `${s.evaluators.find((e) => e.id === id)?.pass.length ?? 0}/${s.cases}`),
+    ),
+    row("median duration", (s) => (s.durationMs ? ms(s.durationMs.median) : "-")),
+    row("max duration", (s) => (s.durationMs ? ms(s.durationMs.max) : "-")),
+    row("tool calls", (s) => `${s.toolCalls.total} (${s.toolCalls.failed} failed)`),
+  ];
+  if (runs.some((run) => run.summary.tokens)) {
+    rows.push(row("tokens", (s) => (s.tokens ? `${s.tokens.input} in, ${s.tokens.output} out` : "none reported")));
+  }
+  lines.push(...table(rows), "");
+
+  const oneSided = comparison.evaluators.flatMap((evaluator) =>
+    (
+      [
+        ["passes only in A", evaluator.onlyA],
+        ["passes only in B", evaluator.onlyB],
+        ["cannot be compared", evaluator.undetermined],
+      ] as const
+    )
+      .filter(([, caseIds]) => caseIds.length > 0)
+      .map(([label, caseIds]) => [evaluator.id, `${label} (${caseIds.length})`, caseIds.join(", ")]),
+  );
+  if (oneSided.length === 0) {
+    lines.push("every evaluator passes on the same cases in both runs");
+  } else {
+    lines.push("by evaluator", ...indent(table(oneSided)));
+  }
+
+  const [resultsA, resultsB] = [a, b].map((run) => new Map(run.results.map((result) => [result.caseId, result])));
+  const differing = cases.filter((c) => c.differences.length > 0);
+  if (differing.length === 0) {
+    lines.push("", "no case differs in status, output, verdicts or tool calls");
+  } else {
+    const sides = differing.flatMap((c) => [
+      [c.caseId, "A", describeSide(resultsA!.get(c.caseId)!, c.a)],
+      ["", "B", describeSide(resultsB!.get(c.caseId)!, c.b)],
+    ]);
+    lines.push("", `cases that differ (${differing.length} of ${cases.length})`, ...indent(table(sides)));
+  }
+  return lines.join("\n");
+}
+
+function describeSide(result: CaseResult, side: CaseSide): string {
+  if (result.status !== "completed") return describeFailure(result)[1]!;
+  const parts = [
+    result.output.kind === "answer" ? `answer ${shorten(JSON.stringify(result.output.value))}` : "abstain",
+    `${side.toolCalls} tool call${side.toolCalls === 1 ? "" : "s"}`,
+  ];
+  if (side.fallback) parts.push("fallback");
+  const withOutcome = (outcome: string) =>
+    Object.entries(side.verdicts)
+      .filter(([, o]) => o === outcome)
+      .map(([id]) => id);
+  if (withOutcome("fail").length > 0) parts.push(`fails ${withOutcome("fail").join(" and ")}`);
+  if (withOutcome("error").length > 0) parts.push(`evaluator error in ${withOutcome("error").join(" and ")}`);
+  return parts.join(", ");
+}
+
+function shorten(text: string): string {
+  return text.length > 60 ? `${text.slice(0, 59)}…` : text;
 }
 
 function describeFailure(result: CaseResult): string[] {

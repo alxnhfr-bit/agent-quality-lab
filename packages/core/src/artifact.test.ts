@@ -4,8 +4,10 @@ import { z } from "zod";
 import {
   caseResultSchema,
   evaluationRecordSchema,
+  judgmentSchema,
   manifestSchema,
   traceEventSchema,
+  verdictSchema,
   type CaseResult,
   type JsonValue,
 } from "./artifact.ts";
@@ -82,6 +84,13 @@ test("a verdict that is not pass or fail must explain itself", () => {
     evaluationRecordSchema.safeParse(record({ outcome: "error", detail: "threw" })).success,
     true,
   );
+});
+
+test("a case that never reached an evaluator is recorded as such, and an evaluator cannot claim it", () => {
+  const skipped = { outcome: "not_evaluated", detail: "the case did not complete (timeout)" };
+  assert.equal(verdictSchema.safeParse(skipped).success, true);
+  assert.equal(verdictSchema.safeParse({ outcome: "not_evaluated" }).success, false);
+  assert.equal(judgmentSchema.safeParse(skipped).success, false);
 });
 
 test("a manifest parses, and one from another schema version does not", () => {

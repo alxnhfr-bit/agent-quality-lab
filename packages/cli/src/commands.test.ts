@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { loadRun } from "@agent-quality-lab/core/store";
-import { UsageError, evalCommand, runCommand, type Project } from "./commands.ts";
+import { UsageError, compareCommand, evalCommand, runCommand, type Project } from "./commands.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 
@@ -56,6 +56,27 @@ test("a crash is recorded with paths relative to the project", async () => {
 
   assert.match(results, /at Object\.run \(scenarios\/stock-check\/candidates\/mock-agent\.ts:\d+:\d+\)/);
   assert.equal(results.includes(root), false);
+});
+
+test("compare shows where two stored runs differ, and refuses a run that is not scored", async () => {
+  const p = await project();
+  await runCommand(p, { scenario: "stock-check", candidate: "baseline" }, () => {});
+  await runCommand(p, { scenario: "stock-check", candidate: "mock-agent" }, () => {});
+  const runIds = await readdir(p.runsDir);
+  const a = runIds.find((id) => id.endsWith("_baseline"))!;
+  const b = runIds.find((id) => id.endsWith("_mock-agent"))!;
+
+  const output = await compareCommand(p, { a, b });
+  assert.match(output, /\nA  baseline v1    run .*_baseline\nB  mock-agent v1  run .*_mock-agent\n/);
+  assert.match(output, /\ncorrectness pass  12\/12 +6\/12\n/);
+  assert.match(output, /\n  correctness  passes only in A \(6\)  in-stock, small-exact, small-one-over, unknown-item, flaky-lookup-over, service-down\n/);
+  assert.match(output, /\ncases that differ \(8 of 12\)\n/);
+
+  await rm(join(p.runsDir, b, "evaluations.jsonl"));
+  await assert.rejects(
+    compareCommand(p, { a, b }),
+    (error: unknown) => error instanceof UsageError && error.message.includes(`has not been scored: run "aql eval ${b}"`),
+  );
 });
 
 test("mistakes in usage name what is available", async () => {

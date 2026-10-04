@@ -6,6 +6,8 @@ import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  comparability,
+  compare,
   evaluateRun,
   executeRun,
   summarize,
@@ -21,7 +23,7 @@ import {
   writeEvaluations,
   writeRun,
 } from "@agent-quality-lab/core/store";
-import { renderRun } from "./render.ts";
+import { renderComparison, renderRun } from "./render.ts";
 
 /** A mistake in how the command was used. Shown as a message, without a stack trace. */
 export class UsageError extends Error {}
@@ -65,8 +67,7 @@ export async function runCommand(
 }
 
 export async function evalCommand(project: Project, args: { run: string }): Promise<string> {
-  const dir = existsSync(args.run) ? resolve(args.run) : join(project.runsDir, args.run);
-  if (!existsSync(join(dir, "manifest.json"))) throw new UsageError(`no run found at ${dir}`);
+  const dir = findRun(project, args.run);
   const run = await loadRun(dir);
 
   const scenario = await loadScenario(project.root, run.manifest.scenario.id);
@@ -89,6 +90,22 @@ export async function evalCommand(project: Project, args: { run: string }): Prom
     summary: summarize(run.results, evaluations),
     notes,
   });
+}
+
+export async function compareCommand(project: Project, args: { a: string; b: string }): Promise<string> {
+  const [a, b] = await Promise.all([loadRun(findRun(project, args.a)), loadRun(findRun(project, args.b))]);
+  const reasons = comparability(a, b);
+  if (reasons.length > 0) {
+    throw new UsageError(`these runs cannot be compared:\n${reasons.map((reason) => `  - ${reason}`).join("\n")}`);
+  }
+  return renderComparison(compare(a, b), a, b);
+}
+
+/** A run is named by its id, or by a path to its directory. */
+function findRun(project: Project, run: string): string {
+  const dir = existsSync(run) ? resolve(run) : join(project.runsDir, run);
+  if (!existsSync(join(dir, "manifest.json"))) throw new UsageError(`no run found at ${dir}`);
+  return dir;
 }
 
 function datasetName(scenario: AnyScenario, requested: string | undefined): string {

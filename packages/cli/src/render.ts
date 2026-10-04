@@ -7,6 +7,7 @@ import type {
   Manifest,
   RunData,
   RunSummary,
+  SliceSummary,
 } from "@agent-quality-lab/core";
 
 export interface RunReport {
@@ -66,6 +67,21 @@ export function renderRun({ manifest, results, evaluations, summary, notes = [] 
     );
   }
 
+  if (summary.byTag.length > 0) {
+    lines.push(
+      "",
+      ...table([
+        ["tag", "cases", "completed", ...summary.evaluators.map((e) => `${e.id} pass`)],
+        ...summary.byTag.map((tag) => [
+          tag.tag,
+          String(tag.cases),
+          `${tag.byStatus.completed.length}/${tag.cases}`,
+          ...summary.evaluators.map((e) => `${passes(tag, e.id)}/${tag.cases}`),
+        ]),
+      ]),
+    );
+  }
+
   const notCompleted = results.filter((result) => result.status !== "completed").map(describeFailure);
   if (notCompleted.length > 0) lines.push("", "not completed", ...indent(table(notCompleted)));
 
@@ -119,6 +135,26 @@ export function renderComparison(comparison: Comparison, a: RunData, b: RunData)
   }
   lines.push(...table(rows), "");
 
+  const tagsB = new Map(comparison.b.summary.byTag.map((tag) => [tag.tag, tag]));
+  if (comparison.a.summary.byTag.length > 0) {
+    const pair = (a: number, b: number) => `${a} / ${b}`;
+    lines.push(
+      ...table([
+        ["tag", "cases", "completed A / B", ...comparison.evaluators.map((e) => `${e.id} pass A / B`)],
+        ...comparison.a.summary.byTag.map((tagA) => {
+          const tagB = tagsB.get(tagA.tag)!;
+          return [
+            tagA.tag,
+            String(tagA.cases),
+            pair(tagA.byStatus.completed.length, tagB.byStatus.completed.length),
+            ...comparison.evaluators.map((e) => pair(passes(tagA, e.id), passes(tagB, e.id))),
+          ];
+        }),
+      ]),
+      "",
+    );
+  }
+
   const oneSided = comparison.evaluators.flatMap((evaluator) =>
     (
       [
@@ -148,6 +184,10 @@ export function renderComparison(comparison: Comparison, a: RunData, b: RunData)
     lines.push("", `cases that differ (${differing.length} of ${cases.length})`, ...indent(table(sides)));
   }
   return lines.join("\n");
+}
+
+function passes(summary: SliceSummary, evaluatorId: string): number {
+  return summary.evaluators.find((e) => e.id === evaluatorId)?.pass.length ?? 0;
 }
 
 function describeSide(result: CaseResult, side: CaseSide): string {

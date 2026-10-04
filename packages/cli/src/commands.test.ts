@@ -36,6 +36,7 @@ test("run executes a candidate, writes the run and scores it", async () => {
   assert.equal(progress[0], "[1/12] in-stock: completed");
   assert.match(output, new RegExp(`^stock-check v1 · baseline v1 · dataset dev · 12 cases\nrun ${runId}\n`));
   assert.match(output, /correctness  1        12\/12  0     0    0                0/);
+  assert.match(output, /\ntag +cases +completed +correctness pass +tool-use pass\nboundary +5 +5\/5 +5\/5 +5\/5\n/);
 });
 
 test("eval scores a stored run again and arrives at the same report", async () => {
@@ -71,6 +72,7 @@ test("compare shows where two stored runs differ, and refuses a run that is not 
   assert.match(output, /\ncorrectness pass  12\/12 +6\/12\n/);
   assert.match(output, /\n  correctness  passes only in A \(6\)  in-stock, small-exact, small-one-over, unknown-item, flaky-lookup-over, service-down\n/);
   assert.match(output, /\ncases that differ \(8 of 12\)\n/);
+  assert.match(output, /\ntool-failure +3 +3 \/ 3 +3 \/ 1 +3 \/ 0\n/);
 
   await rm(join(p.runsDir, b, "evaluations.jsonl"));
   await assert.rejects(

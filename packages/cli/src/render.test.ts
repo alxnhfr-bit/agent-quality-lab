@@ -4,6 +4,7 @@ import {
   compare,
   summarize,
   type CaseResult,
+  type DatasetCase,
   type EvaluationRecord,
   type Manifest,
   type RunData,
@@ -101,7 +102,10 @@ test("a run without evaluation records says so instead of showing an empty table
 
 // --- Comparison --------------------------------------------------------------
 
+const cases: DatasetCase[] = ["a", "b", "c"].map((id) => ({ id, input: null }));
+
 const other: RunData = {
+  cases,
   manifest: {
     ...manifest,
     runId: "2026-10-04T10-00-00Z_demo_agent",
@@ -134,7 +138,7 @@ const other: RunData = {
 };
 
 test("a comparison shows both runs side by side, then where they differ", () => {
-  const first: RunData = { manifest, results, evaluations };
+  const first: RunData = { manifest, cases, results, evaluations };
   assert.equal(
     renderComparison(compare(first, other), first, other),
     [
@@ -174,8 +178,50 @@ test("a comparison shows both runs side by side, then where they differ", () => 
 
 test("two runs that behave alike are reported as such", () => {
   const settled = evaluations.filter((record) => record.evaluator.id === "correctness");
-  const first: RunData = { manifest, results, evaluations: settled };
+  const first: RunData = { manifest, cases, results, evaluations: settled };
   const text = renderComparison(compare(first, first), first, first);
   assert.match(text, /\nevery evaluator passes on the same cases in both runs\n/);
   assert.match(text, /\nno case differs in status, output, verdicts or tool calls$/);
+});
+
+// --- By tag ------------------------------------------------------------------
+
+const tagged: DatasetCase[] = [
+  { id: "a", input: null, tags: ["easy"] },
+  { id: "b", input: null, tags: ["easy", "slow"] },
+  { id: "c", input: null },
+];
+
+test("a run with tagged cases also shows its counts per tag", () => {
+  const text = renderRun({ manifest, results, evaluations, summary: summarize(results, evaluations, tagged) });
+  assert.ok(
+    text.includes(
+      [
+        "",
+        "tag   cases  completed  correctness pass  style pass",
+        "easy  2      1/2        1/2               0/2",
+        "slow  1      0/1        0/1               0/1",
+        "",
+      ].join("\n"),
+    ),
+    text,
+  );
+});
+
+test("a comparison shows both sides per tag", () => {
+  const first: RunData = { manifest, cases: tagged, results, evaluations };
+  const second: RunData = { ...other, cases: tagged };
+  const text = renderComparison(compare(first, second), first, second);
+  assert.ok(
+    text.includes(
+      [
+        "",
+        "tag   cases  completed A / B  correctness pass A / B  style pass A / B",
+        "easy  2      1 / 2            1 / 2                   0 / 1",
+        "slow  1      0 / 1            0 / 1                   0 / 0",
+        "",
+      ].join("\n"),
+    ),
+    text,
+  );
 });

@@ -30,9 +30,15 @@ function manifest(candidateId: string, config: JsonValue): Manifest {
   };
 }
 
+const cases: DatasetCase[] = [
+  { id: HOSTILE_ID, input: { q: HOSTILE }, expected: HOSTILE, setup: { secret: HOSTILE, stock: 31337 }, tags: [HOSTILE] },
+  { id: "plain", input: 1, tags: ["simple"] },
+];
+
 function run(candidateId: string, results: [CaseResult, Verdict][]): RunData {
   return {
     manifest: manifest(candidateId, { prompt: HOSTILE }),
+    cases,
     results: results.map(([result]) => result),
     evaluations: results.map(
       ([result, verdict]): EvaluationRecord => ({ caseId: result.caseId, evaluator: { id: "correct", version: "1" }, verdict }),
@@ -64,13 +70,8 @@ const b = run("second", [
   [{ caseId: HOSTILE_ID, status: "error", error: { message: HOSTILE, stack: `Error: ${HOSTILE}` }, durationMs: 1, trace: [] }, skipped],
   [{ caseId: "plain", status: "malformed_output", problem: HOSTILE, rawOutput: HOSTILE, durationMs: 1, trace: [] }, skipped],
 ]);
-const cases: DatasetCase[] = [
-  { id: HOSTILE_ID, input: { q: HOSTILE }, expected: HOSTILE, setup: { secret: HOSTILE, stock: 31337 }, tags: [HOSTILE] },
-  { id: "plain", input: 1 },
-];
-
 const comparison = compare(a, b);
-const page = renderHtmlReport({ comparison, a, b, cases });
+const page = renderHtmlReport({ comparison, a, b });
 
 /** The case ids a count in the page would filter the list to. */
 function casesBehind(label: string): string[] {
@@ -108,6 +109,15 @@ test("a case's setup is shown, marked as hidden from the candidate", () => {
   assert.equal(page.match(/Setup, hidden from the candidate/g)?.length, 1);
   assert.match(page, /<p class="label">Setup, hidden from the candidate<\/p><pre>\{\n  &#34;secret&#34;: &#34;&#60;script&#62;/);
   assert.ok(page.includes("31337"));
+});
+
+test("results are broken down by tag, and each tag count filters to its cases", () => {
+  assert.match(page, /<h2>By tag<\/h2>/);
+  assert.deepEqual(casesBehind("tag simple"), ["plain"]);
+  assert.deepEqual(casesBehind("tag simple, A: completed"), ["plain"]);
+  // B returned something malformed on that case, so there is nothing to click.
+  assert.match(page, /<td><span class="zero">0\/1<\/span><\/td>/);
+  assert.match(page, /<span class="tags">simple<\/span>/);
 });
 
 test("each count filters the list to exactly the cases behind it", () => {

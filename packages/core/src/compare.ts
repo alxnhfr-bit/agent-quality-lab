@@ -5,11 +5,13 @@
  * It describes where the runs differ and calls nothing a regression: with one
  * run per side there is no telling a real change from run-to-run noise.
  */
-import type { CaseResult, EvaluationRecord, JsonValue, Manifest, Verdict } from "./artifact.ts";
+import type { CaseResult, DatasetCase, EvaluationRecord, JsonValue, Manifest, Verdict } from "./artifact.ts";
 import { summarize, type RunSummary } from "./summary.ts";
 
 export interface RunData {
   manifest: Manifest;
+  /** The cases the run used, as stored with it. */
+  cases: readonly DatasetCase[];
   results: readonly CaseResult[];
   /** null when the run has not been scored. */
   evaluations: readonly EvaluationRecord[] | null;
@@ -47,6 +49,7 @@ export type Difference = "status" | "output" | "verdicts" | "tool_calls";
 
 export interface CaseComparison {
   caseId: string;
+  tags: string[];
   a: CaseSide;
   b: CaseSide;
   /** What observably differs between the two sides. Empty when nothing does. */
@@ -106,9 +109,10 @@ export function compare(a: RunData, b: RunData): Comparison {
   if (reasons.length > 0) throw new Error(`the runs cannot be compared: ${reasons.join("; ")}`);
 
   const [sidesA, sidesB] = [sides(a), sides(b)];
+  const tags = new Map(a.cases.map((c) => [c.id, c.tags ?? []]));
   const cases = a.results.map(({ caseId }): CaseComparison => {
     const [sa, sb] = [sidesA.get(caseId)!, sidesB.get(caseId)!];
-    return { caseId, a: sa.side, b: sb.side, differences: differences(sa, sb) };
+    return { caseId, tags: tags.get(caseId) ?? [], a: sa.side, b: sb.side, differences: differences(sa, sb) };
   });
 
   const evaluators = evaluatorsOf(a).map((evaluator): EvaluatorComparison => {
@@ -133,7 +137,7 @@ function comparedRun(run: RunData): ComparedRun {
   return {
     runId: run.manifest.runId,
     candidate: run.manifest.candidate,
-    summary: summarize(run.results, run.evaluations ?? []),
+    summary: summarize(run.results, run.evaluations ?? [], run.cases),
   };
 }
 

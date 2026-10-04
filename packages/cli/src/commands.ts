@@ -63,7 +63,7 @@ export async function runCommand(
     manifest: run.manifest,
     results: run.results,
     evaluations,
-    summary: summarize(run.results, evaluations),
+    summary: summarize(run.results, evaluations, dataset.cases),
   });
 }
 
@@ -88,7 +88,7 @@ export async function evalCommand(project: Project, args: { run: string }): Prom
     manifest: run.manifest,
     results: run.results,
     evaluations,
-    summary: summarize(run.results, evaluations),
+    summary: summarize(run.results, evaluations, dataset.cases),
     notes,
   });
 }
@@ -106,7 +106,7 @@ export async function compareCommand(
   const text = renderComparison(comparison, a, b);
   if (args.html === undefined) return text;
 
-  writeFileSync(args.html, renderHtmlReport({ comparison, a, b, cases: a.cases }));
+  writeFileSync(args.html, renderHtmlReport({ comparison, a, b }));
   return `${text}\n\nHTML report written to ${args.html}`;
 }
 

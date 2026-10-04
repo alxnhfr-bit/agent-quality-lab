@@ -4,7 +4,8 @@
  */
 import type { CaseResult, EvaluationRecord } from "./artifact.ts";
 
-export interface RunSummary {
+/** The counts for one set of cases: a whole run, or the cases that carry one tag. */
+export interface SliceSummary {
   cases: number;
   /** Case ids by how execution ended. */
   byStatus: Record<CaseResult["status"], string[]>;
@@ -16,6 +17,16 @@ export interface RunSummary {
   toolCalls: { total: number; failed: number };
   /** Summed over model calls that carry usage. null when none do. */
   tokens: { input: number; output: number } | null;
+}
+
+export interface RunSummary extends SliceSummary {
+  /** The same counts for the cases carrying each tag, in the order the tags first appear. */
+  byTag: TagSummary[];
+}
+
+export interface TagSummary extends SliceSummary {
+  tag: string;
+  caseIds: string[];
 }
 
 /** Case ids by verdict, for one version of one evaluator. */
@@ -39,8 +50,31 @@ const BUCKET = {
   not_evaluated: "notEvaluated",
 } as const;
 
-export function summarize(results: readonly CaseResult[], evaluations: readonly EvaluationRecord[]): RunSummary {
-  const byStatus: RunSummary["byStatus"] = { completed: [], malformed_output: [], error: [], timeout: [] };
+export function summarize(
+  results: readonly CaseResult[],
+  evaluations: readonly EvaluationRecord[],
+  cases: readonly { id: string; tags?: string[] | undefined }[] = [],
+): RunSummary {
+  const tagged = new Map<string, Set<string>>();
+  for (const c of cases) {
+    for (const tag of c.tags ?? []) {
+      if (!tagged.has(tag)) tagged.set(tag, new Set());
+      tagged.get(tag)!.add(c.id);
+    }
+  }
+  const byTag = [...tagged].map(([tag, ids]): TagSummary => {
+    const slice = results.filter((result) => ids.has(result.caseId));
+    return {
+      tag,
+      caseIds: slice.map((result) => result.caseId),
+      ...summarizeSlice(slice, evaluations.filter((record) => ids.has(record.caseId))),
+    };
+  });
+  return { ...summarizeSlice(results, evaluations), byTag };
+}
+
+function summarizeSlice(results: readonly CaseResult[], evaluations: readonly EvaluationRecord[]): SliceSummary {
+  const byStatus: SliceSummary["byStatus"] = { completed: [], malformed_output: [], error: [], timeout: [] };
   const fallbacks: string[] = [];
   const toolCalls = { total: 0, failed: 0 };
   const tokens = { input: 0, output: 0 };

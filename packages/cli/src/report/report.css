@@ -333,7 +333,8 @@ details[open] > summary .case-id::before {
   content: "▾";
 }
 
-.differs {
+.differs,
+.tags {
   display: block;
   margin-left: 16px;
   color: var(--ink-2);

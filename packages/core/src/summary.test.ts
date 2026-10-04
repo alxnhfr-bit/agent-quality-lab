@@ -56,6 +56,7 @@ test("every count is the list of cases behind it", () => {
     durationMs: { median: 3, max: 20 },
     toolCalls: { total: 2, failed: 1 },
     tokens: { input: 15, output: 3 },
+    byTag: [],
   });
 });
 
@@ -90,6 +91,43 @@ test("nothing is invented for what was not measured", () => {
     durationMs: null,
     toolCalls: { total: 0, failed: 0 },
     tokens: null,
+    byTag: [],
   });
   assert.equal(summarize(results.slice(2), []).tokens, null);
+});
+
+test("the cases carrying a tag get the same counts as the whole run", () => {
+  const evaluations = [
+    record("a", "correctness", { outcome: "pass" }),
+    record("b", "correctness", { outcome: "fail" }),
+    record("c", "correctness", skipped),
+    record("d", "correctness", skipped),
+  ];
+  const cases = [
+    { id: "a", tags: ["easy"] },
+    { id: "b", tags: ["easy", "tool-failure"] },
+    { id: "c", tags: ["tool-failure"] },
+    { id: "d" },
+  ];
+  const { byTag } = summarize(results, evaluations, cases);
+
+  assert.deepEqual(
+    byTag.map((tag) => [tag.tag, tag.caseIds]),
+    [
+      ["easy", ["a", "b"]],
+      ["tool-failure", ["b", "c"]],
+    ],
+  );
+  const failures = byTag[1]!;
+  assert.equal(failures.cases, 2);
+  assert.deepEqual(failures.byStatus, { completed: ["b"], malformed_output: [], error: [], timeout: ["c"] });
+  assert.deepEqual(failures.fallbacks, ["b"]);
+  assert.deepEqual(failures.toolCalls, { total: 1, failed: 1 });
+  assert.deepEqual(failures.evaluators, [
+    { id: "correctness", version: "1", pass: [], fail: ["b"], notApplicable: [], error: [], notEvaluated: ["c"] },
+  ]);
+});
+
+test("a run whose cases carry no tags has no breakdown", () => {
+  assert.deepEqual(summarize(results, [], [{ id: "a" }, { id: "b" }]).byTag, []);
 });

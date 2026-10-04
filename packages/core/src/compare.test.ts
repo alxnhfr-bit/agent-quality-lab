@@ -36,6 +36,8 @@ const abstain = (caseId: string, reason: string): CaseResult => ({
   trace: [],
 });
 
+const TAGS: Record<string, string[]> = { b: ["hard"], c: ["hard", "numbers"], f: ["tools"] };
+
 /** Verdicts of a single evaluator, "correct", one per result. */
 function run(candidateId: string, cases: [CaseResult, Outcome][], overrides: Partial<Manifest> = {}): RunData {
   const evaluations = cases.map(([result, outcome]): EvaluationRecord => ({
@@ -43,7 +45,12 @@ function run(candidateId: string, cases: [CaseResult, Outcome][], overrides: Par
     evaluator: { id: "correct", version: "1" },
     verdict: outcome === "pass" || outcome === "fail" ? { outcome } : { outcome, detail: "x" },
   }));
-  return { manifest: manifest(candidateId, overrides), results: cases.map(([result]) => result), evaluations };
+  return {
+    manifest: manifest(candidateId, overrides),
+    cases: cases.map(([{ caseId }]) => ({ id: caseId, input: null, ...(TAGS[caseId] && { tags: TAGS[caseId] }) })),
+    results: cases.map(([result]) => result),
+    evaluations,
+  };
 }
 
 const a = run("first", [
@@ -91,10 +98,28 @@ test("a comparison carries both runs' identity, summary and per-case facts", () 
   assert.deepEqual(comparison.b.summary.byStatus.error, ["d"]);
   assert.deepEqual(comparison.cases.at(-1), {
     caseId: "f",
+    tags: ["tools"],
     a: { status: "completed", verdicts: { correct: "pass" }, toolCalls: 1, fallback: false, durationMs: 1 },
     b: { status: "completed", verdicts: { correct: "pass" }, toolCalls: 2, fallback: false, durationMs: 1 },
     differences: ["tool_calls"],
   });
+});
+
+test("each side's summary is also broken down by tag", () => {
+  const { a: first, b: second } = compare(a, b);
+  const passes = (summary: typeof first.summary) =>
+    summary.byTag.map((tag) => [tag.tag, tag.caseIds, tag.evaluators[0]?.pass]);
+
+  assert.deepEqual(passes(first.summary), [
+    ["hard", ["b", "c"], ["b"]],
+    ["numbers", ["c"], []],
+    ["tools", ["f"], ["f"]],
+  ]);
+  assert.deepEqual(passes(second.summary), [
+    ["hard", ["b", "c"], ["c"]],
+    ["numbers", ["c"], ["c"]],
+    ["tools", ["f"], ["f"]],
+  ]);
 });
 
 test("a run can be compared with itself and shows no difference", () => {

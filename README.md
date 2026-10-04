@@ -121,9 +121,14 @@ The `stock-check` scenario has 12 cases. In three of them the right behaviour is
 | Tool use: pass | 12/12 | 5/12 |
 | Tool calls | 15 (4 failed) | 11 (3 failed) |
 
-Below the totals, the comparison lists the cases behind every difference:
+Below the totals, the comparison breaks the counts down by tag and lists the cases behind every difference:
 
 ```text
+tag             cases  completed A / B  correctness pass A / B  tool-use pass A / B
+boundary        5      5 / 4            5 / 3                   5 / 3
+should-abstain  3      3 / 2            3 / 1                   3 / 1
+tool-failure    3      3 / 3            3 / 1                   3 / 0
+
 by evaluator
   correctness  passes only in A (6)  in-stock, small-exact, small-one-over, unknown-item, flaky-lookup-over, service-down
   tool-use     passes only in A (7)  in-stock, in-stock-exact, small-exact, unknown-item, flaky-lookup, flaky-lookup-over, service-down
@@ -190,6 +195,8 @@ scenarios/<scenario>/
   datasets/*.jsonl     one case per line: id, input, and optionally expected, setup and tags
   candidates/<name>.ts default-exports a candidate
 ```
+
+Tags are free labels on a case, such as `boundary` or `tool-failure`. Summaries, comparisons and the HTML report repeat every count per tag, so a weakness on one kind of case stays visible.
 
 A case can carry a `setup`: the facts of that one case, such as what a lookup returns or which service is down. The scenario builds the case's tools from it and evaluators can read it, but the candidate never receives it. The example scenario does not use one; its tools behave the same way for every case.
 

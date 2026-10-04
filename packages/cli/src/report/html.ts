@@ -17,6 +17,7 @@ import type {
   Manifest,
   RunData,
   RunSummary,
+  TagSummary,
   TraceEvent,
   Verdict,
 } from "@agent-quality-lab/core";
@@ -26,8 +27,6 @@ export interface HtmlReport {
   comparison: Comparison;
   a: RunData;
   b: RunData;
-  /** The cases both runs used, for showing each case's input and expected behaviour. */
-  cases: readonly DatasetCase[];
 }
 
 /** Markup that is safe to insert as it is. Anything else interpolated into `html` is escaped. */
@@ -53,7 +52,7 @@ const asset = (name: string) => new Markup(readFileSync(new URL(name, import.met
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 const shorten = (text: string) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
 
-export function renderHtmlReport({ comparison, a, b, cases }: HtmlReport): string {
+export function renderHtmlReport({ comparison, a, b }: HtmlReport): string {
   const { scenario, dataset } = comparison;
   const runs = [
     { label: "A", run: comparison.a, data: a },
@@ -81,7 +80,8 @@ export function renderHtmlReport({ comparison, a, b, cases }: HtmlReport): strin
   }
 </header>
 ${summarySection(comparison)}
-${casesSection(comparison, a, b, cases)}
+${tagSection(comparison)}
+${casesSection(comparison, a, b)}
 </main>
 <script>${asset("./report.js")}</script>
 </body>
@@ -178,6 +178,45 @@ function summarySection(comparison: Comparison): Markup {
 </section>`;
 }
 
+/** The same counts as the summary, for the cases that carry each tag. */
+function tagSection(comparison: Comparison): Markup | false {
+  const tagsA = comparison.a.summary.byTag;
+  if (tagsA.length === 0) return false;
+  const tagsB = new Map(comparison.b.summary.byTag.map((tag) => [tag.tag, tag]));
+
+  return html`<section>
+  <h2>By tag</h2>
+  <div class="table-wrap"><table class="grouped">
+    <thead><tr>
+      <th scope="col">Tag</th><th scope="col">Cases</th><th scope="col">Run</th><th scope="col">Completed</th>
+      ${comparison.evaluators.map((evaluator) => html`<th scope="col">${evaluator.id} pass</th>`)}
+    </tr></thead>
+    <tbody>${tagsA.map((tagA) => {
+      const sides: [string, TagSummary][] = [
+        ["A", tagA],
+        ["B", tagsB.get(tagA.tag)!],
+      ];
+      return sides.map(([side, tag], i) => {
+        const name = `tag ${tag.tag}, ${side}`;
+        return html`<tr class="${i === sides.length - 1 && "group-end"}">
+        ${
+          i === 0 &&
+          html`<th scope="rowgroup" rowspan="${sides.length}">${tag.tag}</th>
+          <td rowspan="${sides.length}">${count(tag.caseIds, `tag ${tag.tag}`)}</td>`
+        }
+        <td><span class="side">${side}</span></td>
+        <td>${count(tag.byStatus.completed, `${name}: completed`, `${tag.byStatus.completed.length}/${tag.cases}`)}</td>
+        ${comparison.evaluators.map((evaluator) => {
+          const pass = tag.evaluators.find((e) => e.id === evaluator.id)?.pass ?? [];
+          return html`<td>${count(pass, `${name}, ${evaluator.id}: pass`, `${pass.length}/${tag.cases}`)}</td>`;
+        })}
+      </tr>`;
+      });
+    })}</tbody>
+  </table></div>
+</section>`;
+}
+
 function meter(part: number, whole: number): Markup {
   const width = whole === 0 ? 0 : (part / whole) * 100;
   return html`<span class="meter" role="img" aria-label="${part} of ${whole} cases pass" title="${part} of ${whole} cases pass"><span style="width:${width.toFixed(1)}%"></span></span>`;
@@ -185,7 +224,7 @@ function meter(part: number, whole: number): Markup {
 
 // --- Cases ---------------------------------------------------------------------
 
-function casesSection(comparison: Comparison, a: RunData, b: RunData, cases: readonly DatasetCase[]): Markup {
+function casesSection(comparison: Comparison, a: RunData, b: RunData): Markup {
   const ids = comparison.cases.map((c) => c.caseId);
   const differing = comparison.cases.filter((c) => c.differences.length > 0).map((c) => c.caseId);
   const incomplete = comparison.cases
@@ -194,7 +233,8 @@ function casesSection(comparison: Comparison, a: RunData, b: RunData, cases: rea
   const filter = (label: string, caseIds: string[], pressed = false) =>
     html`<button class="filter" data-cases="${JSON.stringify(caseIds)}" data-label="${label}" aria-pressed="${String(pressed)}">${label} ${caseIds.length}</button>`;
 
-  const inputs = new Map(cases.map((c) => [c.id, c]));
+  // Both runs used the same dataset, so either side's copy of the cases will do.
+  const inputs = new Map(a.cases.map((c) => [c.id, c]));
   const details = [a, b].map((run) => ({
     results: new Map(run.results.map((result) => [result.caseId, result])),
     evaluations: Map.groupBy(run.evaluations ?? [], (record) => record.caseId),
@@ -233,7 +273,7 @@ const DIFFERENCE = { status: "status", output: "output", verdicts: "verdicts", t
 function caseEntry(c: CaseComparison, input: DatasetCase | undefined, sides: SideView[]): Markup {
   return html`<details class="case" data-case="${c.caseId}">
     <summary>
-      <span class="case-id">${c.caseId}${
+      <span class="case-id">${c.caseId}${c.tags.length > 0 && html`<span class="tags">${c.tags.join(" · ")}</span>`}${
         c.differences.length > 0 &&
         html`<span class="differs">differs in ${c.differences.map((d) => DIFFERENCE[d]).join(", ")}</span>`
       }</span>

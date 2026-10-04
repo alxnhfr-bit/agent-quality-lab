@@ -33,7 +33,7 @@ test("an answer that fits the output schema completes", async () => {
     scenarioWith(),
     candidate(async ({ n }) => ({ kind: "answer", value: { n } })),
     c,
-    ticking(),
+    { clock: ticking() },
   );
   assert.deepEqual(result, {
     caseId: "c1",
@@ -65,6 +65,13 @@ test("a candidate that throws is recorded as an error, whether or not it is asyn
   );
   assert.equal(rejecting.status === "error" && rejecting.error.message, "boom");
   assert.equal(throwing.status === "error" && throwing.error.message, "plain string");
+});
+
+test("a recorded stack trace goes through the cleaner the run was given", async () => {
+  const result = await runCase(scenarioWith(), candidate(async () => Promise.reject(new Error("boom"))), c, {
+    cleanStack: (stack) => stack.split("\n")[0]!,
+  });
+  assert.deepEqual(result.status === "error" && result.error, { message: "boom", stack: "Error: boom" });
 });
 
 test("output that is not an answer or an abstention is malformed, and kept", async () => {
@@ -114,7 +121,7 @@ test("tool calls are observed in order, with arguments, results and durations", 
       return { kind: "answer", value: twice };
     }),
     c,
-    ticking(),
+    { clock: ticking() },
   );
   assert.deepEqual(result.trace, [
     { seq: 0, source: "observed", type: "tool_call", name: "double", args: { n: 2 }, result: { n: 4 }, durationMs: 5 },
@@ -130,7 +137,7 @@ test("a failed tool call is recorded, and the candidate may recover from it", as
       return { kind: "answer", value: { n } };
     }),
     c,
-    ticking(),
+    { clock: ticking() },
   );
   assert.equal(result.status, "completed");
   assert.deepEqual(result.trace, [

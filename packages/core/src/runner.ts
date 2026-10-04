@@ -30,6 +30,8 @@ export interface RunOptions {
   now?: () => Date;
   /** Monotonic milliseconds, for durations. */
   clock?: () => number;
+  /** Applied to stack traces before they are recorded, e.g. to keep local paths out of a run. */
+  cleanStack?: (stack: string) => string;
   onCaseDone?: (result: CaseResult, done: number, total: number) => void;
 }
 
@@ -49,7 +51,6 @@ export async function executeRun<I, O, E>(
   options: RunOptions,
 ): Promise<Run> {
   const now = options.now ?? (() => new Date());
-  const clock = options.clock ?? defaultClock;
 
   // Checked before any case runs, so a candidate that cannot be recorded fails fast.
   const candidateInfo = manifestSchema.shape.candidate.parse({
@@ -62,7 +63,7 @@ export async function executeRun<I, O, E>(
   const startedAt = now();
   const results: CaseResult[] = [];
   for (const c of dataset.cases) {
-    const result = await runCase(scenario, candidate, c, clock);
+    const result = await runCase(scenario, candidate, c, options);
     results.push(result);
     options.onCaseDone?.(result, results.length, dataset.cases.length);
   }
@@ -85,8 +86,9 @@ export async function runCase<I, O, E>(
   scenario: Pick<Scenario<I, O, E>, "tools" | "outputSchema" | "timeoutMs">,
   candidate: Pick<Candidate<I, O>, "run">,
   c: Case<I, E>,
-  clock: Clock = defaultClock,
+  options: Pick<RunOptions, "clock" | "cleanStack"> = {},
 ): Promise<CaseResult> {
+  const clock = options.clock ?? defaultClock;
   const trace: TraceEvent[] = [];
   // Once the case has ended, nothing the candidate still does is evidence about it.
   let open = true;
@@ -131,7 +133,7 @@ export async function runCase<I, O, E>(
     return { ...base, status: "timeout", timeoutMs: scenario.timeoutMs };
   }
   if (settled.how === "threw") {
-    return { ...base, status: "error", error: describeError(settled.error) };
+    return { ...base, status: "error", error: describeError(settled.error, options.cleanStack) };
   }
 
   const malformed = (problem: string): CaseResult => {
@@ -197,9 +199,14 @@ function observe(
   return observed;
 }
 
-function describeError(error: unknown): { message: string; stack?: string } {
+function describeError(
+  error: unknown,
+  cleanStack: (stack: string) => string = (stack) => stack,
+): { message: string; stack?: string } {
   if (!(error instanceof Error)) return { message: String(error) };
-  return error.stack ? { message: error.message, stack: error.stack } : { message: error.message };
+  return error.stack
+    ? { message: error.message, stack: cleanStack(error.stack) }
+    : { message: error.message };
 }
 
 function roundMs(ms: number): number {

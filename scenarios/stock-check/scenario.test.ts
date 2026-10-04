@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runCase, type CaseResult, type CompletedCase, type Verdict } from "@agent-quality-lab/core";
+import { evaluateRun, runCase, type CaseResult, type Verdict } from "@agent-quality-lab/core";
 import { loadDataset } from "@agent-quality-lab/core/store";
 import baseline from "./candidates/baseline.ts";
 import mockAgent, { mockAgent as mockAgentWithSeed } from "./candidates/mock-agent.ts";
-import scenario, { type Output } from "./scenario.ts";
+import scenario from "./scenario.ts";
 
 const dataset = await loadDataset(scenario, "dev");
 // The scenario's real limit only matters for how long a hanging candidate keeps the test waiting.
@@ -16,21 +16,9 @@ async function runAll(candidate: typeof baseline): Promise<Map<string, CaseResul
   return results;
 }
 
-function completed(result: CaseResult): CompletedCase<Output> {
-  assert.equal(result.status, "completed");
-  const { output } = result as Extract<CaseResult, { status: "completed" }>;
-  if (output.kind === "abstain") return { ...result, output };
-  const value = scenario.outputSchema.safeParse(output.value);
-  assert.ok(value.success);
-  return { ...result, output: { kind: "answer", value: value.data } };
-}
-
 async function verdicts(results: Map<string, CaseResult>, caseId: string): Promise<Record<string, Verdict>> {
-  const c = dataset.cases.find((candidate) => candidate.id === caseId)!;
-  const entries = await Promise.all(
-    scenario.evaluators.map(async (e) => [e.id, await e.evaluate(c, completed(results.get(caseId)!))] as const),
-  );
-  return Object.fromEntries(entries);
+  const records = await evaluateRun(scenario, dataset.cases, [results.get(caseId)!]);
+  return Object.fromEntries(records.map((record) => [record.evaluator.id, record.verdict]));
 }
 
 test("the dev dataset has twelve cases, three of which call for abstaining", () => {
@@ -96,7 +84,7 @@ test("the evaluators tell a wrong answer, a missed abstention and a wasted looku
   });
   assert.deepEqual(await verdicts(results, "in-stock-exact"), {
     correctness: { outcome: "pass" },
-    "tool-use": { outcome: "fail", value: 2, detail: "made 2 lookups where 1 suffice" },
+    "tool-use": { outcome: "fail", value: 2, detail: "made 2 lookups where 1 is enough" },
   });
 });
 

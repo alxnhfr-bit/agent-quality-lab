@@ -1,0 +1,12 @@
+{
+  "name": "@agent-quality-lab/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "aql": "./src/main.ts"
+  },
+  "dependencies": {
+    "@agent-quality-lab/core": "*"
+  }
+}

@@ -9,6 +9,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "aql": "node packages/cli/src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"packages/*/src/**/*.test.ts\" \"scenarios/**/*.test.ts\""
   },

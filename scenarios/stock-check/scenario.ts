@@ -100,7 +100,7 @@ const toolUse: Evaluator<Input, Output, Expected> = {
       return fail("answered although no lookup succeeded");
     }
     if (calls.length > c.expected.maxToolCalls) {
-      return fail(`made ${calls.length} lookups where ${c.expected.maxToolCalls} suffice`);
+      return fail(`made ${calls.length} lookups where ${c.expected.maxToolCalls} is enough`);
     }
     return { outcome: "pass", value: calls.length };
   },

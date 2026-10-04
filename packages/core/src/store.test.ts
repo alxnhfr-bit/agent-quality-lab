@@ -1,12 +1,21 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { z } from "zod";
 import { caseResultSchema, manifestSchema } from "./artifact.ts";
 import type { Run } from "./runner.ts";
-import { loadDataset, parseDataset, readEnvironment, writeRun } from "./store.ts";
+import {
+  loadDataset,
+  loadRun,
+  parseDataset,
+  projectRoot,
+  readEnvironment,
+  stackRelativeTo,
+  writeEvaluations,
+  writeRun,
+} from "./store.ts";
 
 const schemas = {
   inputSchema: z.strictObject({ n: z.number() }),
@@ -114,4 +123,69 @@ test("the environment says so when there is no git checkout", async () => {
   const environment = readEnvironment(await mkdtemp(join(tmpdir(), "aql-")));
   assert.equal(environment.node, process.version);
   assert.equal(environment.git, null);
+});
+
+test("a stored run loads without evaluations until it has been scored", async () => {
+  const dataset = parseDataset(schemas, "dev", text);
+  const run = runFor(dataset);
+  const dir = await writeRun(await mkdtemp(join(tmpdir(), "aql-")), run, dataset);
+
+  assert.deepEqual(await loadRun(dir), {
+    dir,
+    manifest: run.manifest,
+    datasetText: text,
+    results: run.results,
+    evaluations: null,
+  });
+
+  const evaluations = [
+    { caseId: "a", evaluator: { id: "correctness", version: "1" }, verdict: { outcome: "pass" as const } },
+  ];
+  await writeEvaluations(dir, evaluations);
+  assert.deepEqual((await loadRun(dir)).evaluations, evaluations);
+
+  await writeEvaluations(dir, []);
+  assert.deepEqual((await loadRun(dir)).evaluations, []);
+});
+
+test("a run whose files were edited afterwards does not load", async () => {
+  const dataset = parseDataset(schemas, "dev", text);
+  const runsDir = await mkdtemp(join(tmpdir(), "aql-"));
+  const dir = await writeRun(runsDir, runFor(dataset), dataset);
+
+  const results = await readFile(join(dir, "results.jsonl"), "utf8");
+  await writeFile(join(dir, "results.jsonl"), results.split("\n")[0] + "\n");
+  await assert.rejects(loadRun(dir), /expected 2 results, got 1/);
+
+  await writeFile(join(dir, "results.jsonl"), results);
+  await writeFile(join(dir, "dataset.jsonl"), text.replace('"n":1', '"n":9'));
+  await assert.rejects(loadRun(dir), /does not match the hash/);
+
+  await assert.rejects(loadRun(join(runsDir, "missing")), /no run found/);
+});
+
+test("stack traces are made relative to the project, and other paths are left alone", () => {
+  const clean = stackRelativeTo("/home/someone/lab");
+  const stack = [
+    "Error: boom",
+    "    at run (file:///home/someone/lab/scenarios/demo/candidates/a.ts:3:9)",
+    "    at helper (/home/someone/lab/packages/core/src/runner.ts:10:2)",
+    "    at other (file:///home/someone/elsewhere/b.ts:1:1)",
+    "    at node:internal/process/task_queues:105:5",
+  ].join("\n");
+  assert.equal(
+    clean(stack),
+    [
+      "Error: boom",
+      "    at run (scenarios/demo/candidates/a.ts:3:9)",
+      "    at helper (packages/core/src/runner.ts:10:2)",
+      "    at other (file:///home/someone/elsewhere/b.ts:1:1)",
+      "    at node:internal/process/task_queues:105:5",
+    ].join("\n"),
+  );
+});
+
+test("outside a git checkout the project root is the directory itself", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aql-"));
+  assert.equal(projectRoot(dir), dir);
 });

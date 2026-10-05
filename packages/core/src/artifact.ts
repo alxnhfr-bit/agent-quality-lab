@@ -175,7 +175,16 @@ export const datasetCaseSchema = z.strictObject({
 export const manifestSchema = z.strictObject({
   schemaVersion: z.literal(SCHEMA_VERSION),
   runId: slug,
-  scenario: z.strictObject({ id: slug, version: id }),
+  scenario: z.strictObject({
+    id: slug,
+    version: id,
+    /** What every candidate was told about the task. Absent in runs made before this was recorded. */
+    instructions: z.string().optional(),
+    /** The tools every candidate was offered, as described to it. */
+    tools: z
+      .array(z.strictObject({ name: id, description: z.string(), parameters: jsonSchema }))
+      .optional(),
+  }),
   dataset: z.strictObject({
     name: slug,
     /** Hash of dataset.jsonl as snapshotted into the run. */

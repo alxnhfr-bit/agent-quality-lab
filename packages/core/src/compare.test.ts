@@ -196,3 +196,30 @@ test("runs scored with different evaluators are refused", () => {
     'they were scored with different evaluators (correct@1 and correct@2): score both again with "aql eval"',
   ]);
 });
+
+test("runs whose candidates were told different things are refused", () => {
+  const told = (instructions: string, description: string): Partial<Manifest> => ({
+    scenario: {
+      id: "demo",
+      version: "1",
+      instructions,
+      tools: [{ name: "lookup", description, parameters: { type: "object", properties: { id: { type: "string" } } } }],
+    },
+  });
+  const first = run("first", [], told("Answer briefly.", "Looks up a record."));
+
+  assert.deepEqual(comparability(first, run("second", [], told("Answer briefly.", "Looks up a record."))), []);
+  assert.deepEqual(comparability(first, run("second", [], told("Answer at length.", "Looks up a record."))), [
+    "their candidates were given different instructions",
+  ]);
+  assert.deepEqual(comparability(first, run("second", [], told("Answer briefly.", "Finds a record."))), [
+    "their candidates were offered different tools, or tools described differently",
+  ]);
+});
+
+test("a run made before instructions were recorded can still be compared", () => {
+  const recorded = run("first", [], {
+    scenario: { id: "demo", version: "1", instructions: "Answer briefly.", tools: [] },
+  });
+  assert.deepEqual(comparability(recorded, run("second", [])), []);
+});

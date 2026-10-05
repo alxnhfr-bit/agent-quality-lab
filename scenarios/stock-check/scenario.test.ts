@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluateRun, runCase, type CaseResult, type Verdict } from "@agent-quality-lab/core";
+import { evaluateRun, runCase, type CaseResult, type RunContext, type Verdict } from "@agent-quality-lab/core";
 import { loadDataset } from "@agent-quality-lab/core/store";
 import baseline from "./candidates/baseline.ts";
 import mockAgent, { mockAgent as mockAgentWithSeed } from "./candidates/mock-agent.ts";
@@ -94,4 +94,27 @@ test("the same seed gives the same run, and another seed a different one", async
 
   assert.deepEqual(outcome(await runAll(mockAgentWithSeed(49))), outcome(await runAll(mockAgent)));
   assert.notDeepEqual(outcome(await runAll(mockAgentWithSeed(12))), outcome(await runAll(mockAgent)));
+});
+
+test("a candidate is told the task and what the lookup is for", async () => {
+  let ctx: RunContext | undefined;
+  await runCase(
+    quick,
+    {
+      run: async (_input, given) => {
+        ctx = given;
+        return { kind: "abstain", reason: "just looking" };
+      },
+    },
+    dataset.cases[0]!,
+  );
+  assert.match(ctx!.instructions, /^Say whether an order .* can be fulfilled\./);
+  assert.match(ctx!.instructions, /Never guess\./);
+  assert.match(ctx!.tools.getStock!.description, /how many units of an item are in stock/);
+  assert.deepEqual(ctx!.tools.getStock!.parameters, {
+    type: "object",
+    properties: { sku: { type: "string", description: "The item's SKU, such as kettle" } },
+    required: ["sku"],
+    additionalProperties: false,
+  });
 });

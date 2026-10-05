@@ -97,28 +97,55 @@ export type CancellationPolicy = z.infer<typeof cancellationPolicySchema>;
 export type Property = z.infer<typeof propertySchema>;
 export type World = z.infer<typeof worldSchema>;
 
+/**
+ * What each lookup is for and what its record means, as a candidate is told.
+ * They say nothing about which lookups a given question needs.
+ */
+const DESCRIPTIONS: Record<ToolName, string> = {
+  get_booking:
+    "Looks up a booking by its reference. The record has the booking's status, the ids of its property and rate plan, its check-in and check-out dates (calendar dates at the property, without a time) and its total price.",
+  get_rate_plan:
+    "Looks up a rate plan by id. The record has its name, whether it is marked refundable, and the id of its cancellation policy.",
+  get_cancellation_policy:
+    "Looks up a cancellation policy by id. In the record, a tier means: cancelling at least untilHoursBeforeCheckIn hours before check-in costs feePercent of the booking total. When several tiers apply, the one with the most hours counts. Once no tier applies any more, afterwardsFeePercent is charged.",
+  get_property:
+    "Looks up a property by id. The record has its name, its offset from UTC (such as +07:00), its check-in time in its own local time, and its description.",
+  get_payment:
+    "Looks up the payment for a booking by the booking's reference. The record has the payment's status and amount.",
+  get_promotion: "Looks up a promotion by its code. The record has the code and a description of the offer.",
+};
+
+const byBookingReference = z.strictObject({ reference: z.string().describe("The booking reference, such as BK-1001") });
+const byId = z.strictObject({ id: z.string().describe("The record's id, as given in another record") });
+const byPaidBooking = z.strictObject({ bookingReference: z.string().describe("The booking reference, such as BK-1001") });
+const byCode = z.strictObject({ code: z.string().describe("The promotion code") });
+
 /** The lookup tools over one world. Built fresh for each case. */
 export function createTools(world: World): Record<ToolName, Tool> {
   const failedOnce = new Set<ToolName>();
 
-  const lookup =
-    <A>(name: ToolName, args: z.ZodType<A>, find: (args: A) => object | undefined): Tool =>
-    async (raw): Promise<JsonValue> => {
-      const fault = world.faults?.[name];
-      if (fault === "unavailable" || (fault === "fails_once" && !failedOnce.has(name))) {
-        failedOnce.add(name);
-        throw new Error(`${name}: service unavailable`);
-      }
-      if (fault === "malformed") return "<html><body>502 Bad Gateway</body></html>";
+  const lookup = <A>(name: ToolName, args: z.ZodType<A>, find: (args: A) => object | undefined): Tool => {
+    const { $schema: _, ...parameters } = z.toJSONSchema(args);
+    return {
+      description: `${DESCRIPTIONS[name]} Returns {found: true, record}, or {found: false} when there is no such record.`,
+      parameters: parameters as JsonValue,
+      async run(raw): Promise<JsonValue> {
+        const fault = world.faults?.[name];
+        if (fault === "unavailable" || (fault === "fails_once" && !failedOnce.has(name))) {
+          failedOnce.add(name);
+          throw new Error(`${name}: service unavailable`);
+        }
+        if (fault === "malformed") return "<html><body>502 Bad Gateway</body></html>";
 
-      const record = find(args.parse(raw));
-      // The records were read from the dataset, so they are plain JSON.
-      return record === undefined ? { found: false } : { found: true, record: record as JsonValue };
+        const record = find(args.parse(raw));
+        // The records were read from the dataset, so they are plain JSON.
+        return record === undefined ? { found: false } : { found: true, record: record as JsonValue };
+      },
     };
+  };
 
-  const byId = z.strictObject({ id: z.string() });
   return {
-    get_booking: lookup("get_booking", z.strictObject({ reference: z.string() }), ({ reference }) =>
+    get_booking: lookup("get_booking", byBookingReference, ({ reference }) =>
       world.bookings?.find((booking) => booking.reference === reference),
     ),
     get_rate_plan: lookup("get_rate_plan", byId, ({ id }) => world.ratePlans?.find((plan) => plan.id === id)),
@@ -126,10 +153,10 @@ export function createTools(world: World): Record<ToolName, Tool> {
       world.cancellationPolicies?.find((policy) => policy.id === id),
     ),
     get_property: lookup("get_property", byId, ({ id }) => world.properties?.find((property) => property.id === id)),
-    get_payment: lookup("get_payment", z.strictObject({ bookingReference: z.string() }), ({ bookingReference }) =>
+    get_payment: lookup("get_payment", byPaidBooking, ({ bookingReference }) =>
       world.payments?.find((payment) => payment.bookingReference === bookingReference),
     ),
-    get_promotion: lookup("get_promotion", z.strictObject({ code: z.string() }), ({ code }) =>
+    get_promotion: lookup("get_promotion", byCode, ({ code }) =>
       world.promotions?.find((promotion) => promotion.code === code),
     ),
   };

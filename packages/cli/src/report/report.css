@@ -414,7 +414,15 @@ details[open] > summary .case-id::before {
   grid-column: 1 / -1;
 }
 
-.setup > summary {
+.told {
+  margin-top: 16px;
+}
+
+.told dl {
+  margin-top: 4px;
+}
+
+.fold > summary {
   width: fit-content;
   padding: 2px 6px;
   margin-left: -6px;
@@ -426,7 +434,7 @@ details[open] > summary .case-id::before {
   cursor: pointer;
 }
 
-.setup > pre {
+.fold > pre {
   margin-top: 6px;
 }
 

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluateRun, runCase, type Candidate, type CaseResult, type TraceEvent } from "@agent-quality-lab/core";
+import {
+  evaluateRun,
+  runCase,
+  type Candidate,
+  type CaseResult,
+  type RunContext,
+  type TraceEvent,
+} from "@agent-quality-lab/core";
 import { loadDataset } from "@agent-quality-lab/core/store";
 import naive from "./candidates/naive.ts";
 import rules from "./candidates/rules.ts";
@@ -158,4 +165,52 @@ test("a lookup with arguments the tool does not accept is recorded as a failed c
   };
   const { trace } = await runCase(scenario, sloppy, caseById("free-well-ahead"));
   assert.deepEqual(lookupsIn(trace), ["get_booking failed"]);
+});
+
+test("a candidate is told the task's rules and what each lookup is for", async () => {
+  let ctx: RunContext | undefined;
+  const looking: Run = {
+    run: async (_input, given) => {
+      ctx = given;
+      return { kind: "abstain", reason: "just looking" };
+    },
+  };
+  await runCase(scenario, looking, caseById("free-well-ahead"));
+
+  for (const rule of [/decides the fee/, /property's own time zone/, /24 hours after/, /Escalate to a human/, /Abstain when/]) {
+    assert.match(ctx!.instructions, rule);
+  }
+  assert.deepEqual(Object.keys(ctx!.tools), [
+    "get_booking",
+    "get_rate_plan",
+    "get_cancellation_policy",
+    "get_property",
+    "get_payment",
+    "get_promotion",
+  ]);
+  for (const tool of Object.values(ctx!.tools)) {
+    assert.match(tool.description, /^Looks up .* Returns \{found: true, record\}, or \{found: false\}/);
+  }
+  assert.deepEqual(ctx!.tools.get_booking!.parameters, {
+    type: "object",
+    properties: { reference: { type: "string", description: "The booking reference, such as BK-1001" } },
+    required: ["reference"],
+    additionalProperties: false,
+  });
+});
+
+test("what a candidate is told does not give away which lookups a question needs", async () => {
+  let ctx: RunContext | undefined;
+  await runCase(
+    scenario,
+    {
+      run: async (_input, given) => {
+        ctx = given;
+        return { kind: "abstain", reason: "just looking" };
+      },
+    },
+    caseById("free-well-ahead"),
+  );
+  const told = [ctx!.instructions, ...Object.values(ctx!.tools).map((tool) => tool.description)].join("\n");
+  assert.doesNotMatch(told, /not need|unneeded|unnecessary|do not call|get_payment|get_promotion/i);
 });

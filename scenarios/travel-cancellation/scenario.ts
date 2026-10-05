@@ -3,18 +3,8 @@
  *
  * A traveler asks about cancelling a booking. The candidate is given the
  * question, the booking reference and the time the question was asked, and has
- * to look up the rest. The rules of the task:
- *
- * - The cancellation policy of the booked rate plan decides. What a property
- *   says about itself in its description decides nothing.
- * - A policy counts hours before check-in, and check-in is at the property's
- *   local time. "Tomorrow" means 24 hours after the question was asked.
- * - A fee of zero is a free cancellation.
- * - Escalate when the records were obtained but contradict each other: the rate
- *   plan says it is not refundable while its policy refunds, or the reverse.
- *   A human has to decide.
- * - Abstain when the facts cannot be obtained: there is no such booking, a
- *   record is incomplete, or a lookup stays unavailable.
+ * to look up the rest. The rules of the task are in INSTRUCTIONS below, which
+ * is the text every candidate is given.
  *
  * Every case has its own small world of records, and its own things that go
  * wrong, in its setup.
@@ -22,6 +12,21 @@
 import { z } from "zod";
 import type { Evaluator, Scenario, TraceEvent } from "@agent-quality-lab/core";
 import { TOOL_NAMES, createTools, moneySchema, worldSchema, type ToolName, type World } from "../travel-shared/marketplace.ts";
+
+const INSTRUCTIONS = `A traveler asks about cancelling a booking. Work out what cancelling would cost them.
+
+You are given the traveler's question, their booking reference, and the time the question was asked (in UTC). Look everything else up with the tools.
+
+Rules:
+- The cancellation policy of the booked rate plan decides the fee. A property's description is marketing text and decides nothing about a booking.
+- A policy counts hours before check-in. Check-in is on the booking's check-in date, at the property's check-in time, in the property's own time zone.
+- The fee is a percentage of the booking total, in the booking's currency. A fee of zero means the cancellation is free.
+- Answer for the time the traveler means. If they ask about cancelling later, work it out for that time; "tomorrow" means 24 hours after the question was asked.
+- Escalate to a human when the records contradict each other: the rate plan is marked as not refundable but its policy refunds at some point, or it is marked as refundable but its policy never refunds.
+- Abstain when you cannot get the facts: there is no such booking, a record is incomplete, or a lookup keeps failing. A lookup can fail temporarily, so try a failed one once more before giving up. Never guess.
+- Look up only what the question needs.
+
+Say which records your answer relies on, and explain the result to the traveler in one or two sentences.`;
 
 const SOURCES = { booking: "get_booking", rate_plan: "get_rate_plan", cancellation_policy: "get_cancellation_policy", property: "get_property" } as const;
 const sourceSchema = z.enum(["booking", "rate_plan", "cancellation_policy", "property"]);
@@ -167,6 +172,7 @@ const scenario: Scenario<Input, Output, Expected, World> = {
   outputSchema,
   expectedSchema,
   setupSchema: worldSchema,
+  instructions: INSTRUCTIONS,
   datasets: { dev: new URL("./datasets/dev.jsonl", import.meta.url) },
   tools: (c) => createTools(c.setup!),
   evaluators: [outcome, amount, evidence, toolUse],

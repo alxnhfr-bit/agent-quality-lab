@@ -88,6 +88,14 @@ export function comparability(a: RunData, b: RunData): string[] {
   } else if (caseIds(a).join("\n") !== caseIds(b).join("\n")) {
     reasons.push("their results do not cover the same cases");
   }
+  // Runs made before this was recorded carry neither; they are taken on their scenario version.
+  const [toldA, toldB] = [ma.scenario, mb.scenario];
+  if (toldA.instructions !== undefined && toldB.instructions !== undefined && toldA.instructions !== toldB.instructions) {
+    reasons.push("their candidates were given different instructions");
+  }
+  if (toldA.tools !== undefined && toldB.tools !== undefined && !jsonEqual(toldA.tools, toldB.tools)) {
+    reasons.push("their candidates were offered different tools, or tools described differently");
+  }
   if (ma.settings.timeoutMs !== mb.settings.timeoutMs) {
     reasons.push(`they ran with different time limits (${ma.settings.timeoutMs} ms and ${mb.settings.timeoutMs} ms)`);
   }

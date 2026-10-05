@@ -9,7 +9,17 @@
  * The inventory is fixed and part of the scenario version.
  */
 import { z } from "zod";
-import type { Evaluator, RunContext, Scenario, Tool } from "@agent-quality-lab/core";
+import type { Evaluator, JsonValue, RunContext, Scenario, Tool } from "@agent-quality-lab/core";
+
+/** What every candidate is told. The comment above is for readers of this file. */
+const INSTRUCTIONS = `Say whether an order for a number of units of an item can be fulfilled.
+
+You are given the item's SKU and the quantity ordered. The only way to learn the stock level is the getStock tool.
+
+Rules:
+- The order can be fulfilled when the available stock is at least the quantity ordered.
+- Abstain when the stock level cannot be established: the item is unknown, or the lookup keeps failing. A lookup can fail temporarily, so try a failed one once more before giving up. Never guess.
+- Look up the item you were asked about, and do not repeat a lookup that succeeded.`;
 
 const inputSchema = z.strictObject({
   sku: z.string().min(1),
@@ -42,18 +52,26 @@ const STOCK: Record<string, number> = { kettle: 12, lamp: 0, desk: 3, chair: 40,
 /** Lookups that fail before one succeeds. Infinity: the service never answers for this item. */
 const FAILURES_BEFORE_SUCCESS: Record<string, number> = { mug: 1, sofa: Infinity };
 
+const getStockArgs = z.strictObject({ sku: z.string().describe("The item's SKU, such as kettle") });
+const { $schema: _, ...getStockParameters } = z.toJSONSchema(getStockArgs);
+
 function createTools(): Record<string, Tool> {
   const failures = new Map<string, number>();
   return {
-    async getStock(args): Promise<Stock> {
-      const { sku } = z.strictObject({ sku: z.string() }).parse(args);
-      const failed = failures.get(sku) ?? 0;
-      if (failed < (FAILURES_BEFORE_SUCCESS[sku] ?? 0)) {
-        failures.set(sku, failed + 1);
-        throw new Error("inventory service unavailable");
-      }
-      const available = STOCK[sku];
-      return available === undefined ? { found: false } : { found: true, available };
+    getStock: {
+      description:
+        "Returns how many units of an item are in stock: {found: true, available: <number>}, or {found: false} when the item is unknown.",
+      parameters: getStockParameters as JsonValue,
+      async run(args): Promise<Stock> {
+        const { sku } = getStockArgs.parse(args);
+        const failed = failures.get(sku) ?? 0;
+        if (failed < (FAILURES_BEFORE_SUCCESS[sku] ?? 0)) {
+          failures.set(sku, failed + 1);
+          throw new Error("inventory service unavailable");
+        }
+        const available = STOCK[sku];
+        return available === undefined ? { found: false } : { found: true, available };
+      },
     },
   };
 }
@@ -116,6 +134,7 @@ const scenario: Scenario<Input, Output, Expected> = {
   inputSchema,
   outputSchema,
   expectedSchema,
+  instructions: INSTRUCTIONS,
   datasets: { dev: new URL("./datasets/dev.jsonl", import.meta.url) },
   tools: createTools,
   evaluators: [correctness, toolUse],

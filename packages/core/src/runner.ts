@@ -14,10 +14,11 @@ import {
   manifestSchema,
   traceEventSchema,
   type CaseResult,
+  type JsonValue,
   type Manifest,
   type TraceEvent,
 } from "./artifact.ts";
-import type { Candidate, Case, Dataset, RunContext, Scenario, Tool } from "./types.ts";
+import type { AvailableTool, Candidate, Case, Dataset, RunContext, Scenario, Tool } from "./types.ts";
 
 export interface Run {
   manifest: Manifest;
@@ -37,6 +38,8 @@ export interface RunOptions {
 
 type Clock = () => number;
 type ToolCall = Extract<TraceEvent, { type: "tool_call" }>;
+type OfferedTools = NonNullable<Manifest["scenario"]["tools"]>;
+type CaseScenario<I, O, E, S> = Pick<Scenario<I, O, E, S>, "instructions" | "tools" | "outputSchema" | "timeoutMs">;
 type Settled =
   | { how: "returned"; value: unknown }
   | { how: "threw"; error: unknown }
@@ -62,8 +65,16 @@ export async function executeRun<I, O, E, S>(
 
   const startedAt = now();
   const results: CaseResult[] = [];
+  let offered: { tools: OfferedTools; caseId: string } | undefined;
   for (const c of dataset.cases) {
-    const result = await runCase(scenario, candidate, c, options);
+    const { result, tools } = await executeCase(scenario, candidate, c, options);
+    // One description of the task holds for the whole run, so the tools may not change between cases.
+    offered ??= { tools, caseId: c.id };
+    if (JSON.stringify(tools) !== JSON.stringify(offered.tools)) {
+      throw new Error(
+        `scenario "${scenario.id}" offers different tools for case "${c.id}" than for case "${offered.caseId}"`,
+      );
+    }
     results.push(result);
     options.onCaseDone?.(result, results.length, dataset.cases.length);
   }
@@ -71,7 +82,12 @@ export async function executeRun<I, O, E, S>(
   const manifest = manifestSchema.parse({
     schemaVersion: SCHEMA_VERSION,
     runId: runIdFor(startedAt, scenario.id, candidate.id),
-    scenario: { id: scenario.id, version: scenario.version },
+    scenario: {
+      id: scenario.id,
+      version: scenario.version,
+      instructions: scenario.instructions,
+      tools: offered?.tools ?? [],
+    },
     dataset: { name: dataset.name, sha256: dataset.sha256, caseCount: dataset.cases.length },
     candidate: candidateInfo,
     settings: { timeoutMs: scenario.timeoutMs },
@@ -83,10 +99,36 @@ export async function executeRun<I, O, E, S>(
 }
 
 export async function runCase<I, O, E, S>(
-  scenario: Pick<Scenario<I, O, E, S>, "tools" | "outputSchema" | "timeoutMs">,
+  scenario: CaseScenario<I, O, E, S>,
   candidate: Pick<Candidate<I, O>, "run">,
   c: Case<I, E, S>,
   options: Pick<RunOptions, "clock" | "cleanStack"> = {},
+): Promise<CaseResult> {
+  return (await executeCase(scenario, candidate, c, options)).result;
+}
+
+/** Runs one case, and also says which tools the candidate was offered for it. */
+async function executeCase<I, O, E, S>(
+  scenario: CaseScenario<I, O, E, S>,
+  candidate: Pick<Candidate<I, O>, "run">,
+  c: Case<I, E, S>,
+  options: Pick<RunOptions, "clock" | "cleanStack">,
+): Promise<{ result: CaseResult; tools: OfferedTools }> {
+  const caseTools = scenario.tools?.(c) ?? {};
+  const tools = Object.entries(caseTools).map(([name, { description, parameters }]) => ({
+    name,
+    description,
+    parameters,
+  }));
+  return { result: await runWithTools(scenario, candidate, c, caseTools, options), tools };
+}
+
+async function runWithTools<I, O, E, S>(
+  scenario: CaseScenario<I, O, E, S>,
+  candidate: Pick<Candidate<I, O>, "run">,
+  c: Case<I, E, S>,
+  caseTools: Record<string, Tool>,
+  options: Pick<RunOptions, "clock" | "cleanStack">,
 ): Promise<CaseResult> {
   const clock = options.clock ?? defaultClock;
   const trace: TraceEvent[] = [];
@@ -95,7 +137,8 @@ export async function runCase<I, O, E, S>(
   const abort = new AbortController();
 
   const ctx: RunContext = {
-    tools: observe(scenario.tools?.(c) ?? {}, trace, clock, () => open),
+    instructions: scenario.instructions,
+    tools: observe(caseTools, trace, clock, () => open),
     report(event) {
       if (!open) return;
       const parsed = traceEventSchema.safeParse({ ...event, seq: trace.length, source: "reported" });
@@ -163,10 +206,10 @@ function observe(
   trace: TraceEvent[],
   clock: Clock,
   isOpen: () => boolean,
-): Record<string, Tool> {
-  const observed: Record<string, Tool> = {};
+): Record<string, AvailableTool> {
+  const observed: Record<string, AvailableTool> = {};
   for (const [name, tool] of Object.entries(tools)) {
-    observed[name] = async (args) => {
+    const invoke = async (args: JsonValue): Promise<JsonValue> => {
       if (!isOpen()) throw new Error(`tool "${name}" was called after the case ended`);
 
       const checkedArgs = jsonSchema.safeParse(args);
@@ -186,7 +229,7 @@ function observe(
 
       const started = clock();
       try {
-        const result = await tool(structuredClone(checkedArgs.data));
+        const result = await tool.run(structuredClone(checkedArgs.data));
         call.result = structuredClone(result);
         return result;
       } catch (error) {
@@ -196,6 +239,7 @@ function observe(
         call.durationMs = roundMs(clock() - started);
       }
     };
+    observed[name] = Object.assign(invoke, { description: tool.description, parameters: tool.parameters });
   }
   return observed;
 }

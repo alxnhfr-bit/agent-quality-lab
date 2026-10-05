@@ -20,7 +20,12 @@ function manifest(candidateId: string, config: JsonValue): Manifest {
   return {
     schemaVersion: 1,
     runId: `2026-10-04T09-00-00Z_demo_${candidateId}`,
-    scenario: { id: "demo", version: "1" },
+    scenario: {
+      id: "demo",
+      version: "1",
+      instructions: `Answer the question. ${HOSTILE}`,
+      tools: [{ name: "lookup", description: `Looks things up. ${HOSTILE}`, parameters: { type: "object" } }],
+    },
     dataset: { name: "dev", sha256: "a".repeat(64), caseCount: 2 },
     candidate: { id: candidateId, version: "1", config, deterministic: true },
     settings: { timeoutMs: 20 },
@@ -105,9 +110,15 @@ test("every case is listed, with both sides and its input", () => {
   assert.match(page, /differs in status, verdicts, tool calls/);
 });
 
+test("the report shows what every candidate was told", () => {
+  assert.match(page, /<summary>What every candidate was told<\/summary>/);
+  assert.match(page, /<p class="label">Instructions<\/p><pre>Answer the question\. &#60;script&#62;/);
+  assert.match(page, /<dt><code>lookup<\/code><\/dt><dd>Looks things up\. &#60;script&#62;/);
+});
+
 test("a case's setup is shown, marked as hidden from the candidate", () => {
   assert.equal(page.match(/Setup, hidden from the candidate/g)?.length, 1);
-  assert.match(page, /<details class="setup"><summary>Setup, hidden from the candidate<\/summary><pre>\{\n  &#34;secret&#34;: &#34;&#60;script&#62;/);
+  assert.match(page, /<details class="setup fold"><summary>Setup, hidden from the candidate<\/summary><pre>\{\n  &#34;secret&#34;: &#34;&#60;script&#62;/);
   assert.ok(page.includes("31337"));
 });
 

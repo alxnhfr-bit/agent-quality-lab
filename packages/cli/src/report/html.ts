@@ -76,6 +76,7 @@ export function renderHtmlReport({ comparison, a, b }: HtmlReport): string {
   <h1>${scenario.id} <small>v${scenario.version}</small></h1>
   <p class="sub">dataset ${dataset.name} (${dataset.sha256.slice(0, 8)}) · ${comparison.cases.length} cases · time limit ${ms(a.manifest.settings.timeoutMs)} per case</p>
   <div class="runs">${runs.map(({ label, data }) => runCard(label, data.manifest))}</div>
+  ${told(a.manifest.scenario.instructions !== undefined ? a.manifest.scenario : b.manifest.scenario)}
   ${
     sampled.length > 0 &&
     html`<p class="note">Not deterministic: ${sampled.join(", ")}. Each run is one sample, so a difference on a single case may be noise.</p>`
@@ -89,6 +90,21 @@ ${casesSection(comparison, a, b)}
 </body>
 </html>`;
   return `<!doctype html>\n${page.text}\n`;
+}
+
+/** The task as every candidate was given it. Runs made before this was recorded have nothing to show. */
+function told({ instructions, tools = [] }: Manifest["scenario"]): Markup | false {
+  if (instructions === undefined) return false;
+  return html`<details class="told fold">
+    <summary>What every candidate was told</summary>
+    <div class="block"><p class="label">Instructions</p><pre>${instructions}</pre></div>
+    ${
+      tools.length > 0 &&
+      html`<div class="block"><p class="label">Tools</p><dl>${tools.map(
+        (tool) => html`<dt><code>${tool.name}</code></dt><dd>${tool.description}</dd>`,
+      )}</dl></div>`
+    }
+  </details>`;
 }
 
 function runCard(label: string, manifest: Manifest): Markup {
@@ -300,7 +316,7 @@ function caseEntry(c: CaseComparison, input: DatasetCase | undefined, sides: Sid
         }</div>
         ${
           input?.setup !== undefined &&
-          html`<details class="setup"><summary>Setup, hidden from the candidate</summary><pre>${json(input.setup)}</pre></details>`
+          html`<details class="setup fold"><summary>Setup, hidden from the candidate</summary><pre>${json(input.setup)}</pre></details>`
         }
       </div>
       <div class="columns">${sides.map(sideDetail)}</div>

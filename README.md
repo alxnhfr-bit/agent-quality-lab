@@ -31,7 +31,7 @@ A check of the final answer scores these two the same. The trace shows they are 
 
 | Concept | What it is |
 |---|---|
-| **Scenario** | A task: input and output schemas, datasets, the tools a candidate may call, evaluators and a time limit per case |
+| **Scenario** | A task: written instructions, input and output schemas, datasets, the tools a candidate may call, evaluators and a time limit per case |
 | **Candidate** | An implementation under test. It implements one function that takes a case input and returns an answer or an abstention |
 | **Evaluator** | Judges one aspect of a completed case: pass, fail or not applicable. Several evaluators run on the same result |
 | **Run** | One candidate executed on one dataset of one scenario, stored as files |
@@ -58,7 +58,8 @@ A few rules keep the numbers honest:
 - Evaluators only see completed cases. A case that did not complete is recorded as `not_evaluated` for every evaluator and counts against the candidate.
 - A pass count is out of the cases an evaluator applies to. Cases it calls not applicable are left out and shown in their own column.
 - An evaluator that throws is recorded as an evaluator error. It is neither a pass nor a fail for the candidate.
-- Two runs are only compared if they used the same scenario version, dataset, time limit and evaluator versions. Otherwise `aql compare` refuses and lists the reasons.
+- Every candidate is given the same instructions and the same tools, described the same way. A run records both.
+- Two runs are only compared if they used the same scenario version, instructions, tools, dataset, time limit and evaluator versions. Otherwise `aql compare` refuses and lists the reasons.
 
 ### Run files
 
@@ -66,7 +67,7 @@ Runs are plain files, so they can be read, diffed and scored again without the l
 
 ```text
 runs/<run-id>/
-  manifest.json      what was executed: scenario, dataset hash, candidate, config, git commit, runtime
+  manifest.json      what was executed: scenario, what candidates were told, dataset hash, candidate, config, git commit, runtime
   dataset.jsonl      a snapshot of the cases the run used
   results.jsonl      one line per case: status, output, trace, duration
   evaluations.jsonl  one line per case and evaluator: the verdict and its reason
@@ -238,6 +239,8 @@ scenarios/<scenario>/
   datasets/*.jsonl     one case per line: id, input, and optionally expected, setup and tags
   candidates/<name>.ts default-exports a candidate
 ```
+
+A scenario states its task as written instructions, and each of its tools carries a description and the arguments it accepts. A candidate that has to be told what to do, such as a model, reads them; a plain program can ignore them. No candidate in this repository uses them yet.
 
 Tags are free labels on a case, such as `boundary` or `tool-failure`. Summaries, comparisons and the HTML report repeat every count per tag, so a weakness on one kind of case stays visible.
 

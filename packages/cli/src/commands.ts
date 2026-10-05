@@ -170,6 +170,7 @@ function isScenario(value: unknown): value is AnyScenario {
   return (
     typeof scenario?.id === "string" &&
     typeof scenario.version === "string" &&
+    typeof scenario.instructions === "string" &&
     typeof scenario.datasets === "object" &&
     Array.isArray(scenario.evaluators) &&
     typeof scenario.timeoutMs === "number"

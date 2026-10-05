@@ -10,7 +10,19 @@ type Out = { n: number };
 const outputSchema = z.strictObject({ n: z.number() });
 const c: Case<In, never> = { id: "c1", input: { n: 2 } };
 
-const scenarioWith = (tools?: () => Record<string, Tool>) => ({ outputSchema, timeoutMs: 20, tools });
+const INSTRUCTIONS = "Answer with a number.";
+const scenarioWith = (tools?: () => Record<string, Tool>) => ({
+  instructions: INSTRUCTIONS,
+  outputSchema,
+  timeoutMs: 20,
+  tools,
+});
+/** A tool in the form a scenario defines it, around the function that does the work. */
+const tool = (run: Tool["run"], description = "A test tool."): Tool => ({
+  description,
+  parameters: { type: "object" },
+  run,
+});
 const candidate = (run: Candidate<In, Out>["run"]) => ({ run });
 /** A clock that advances 5 ms every time it is read. */
 const ticking = () => {
@@ -21,11 +33,11 @@ const aborted = (signal: AbortSignal) =>
   new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
 
 const tools = (): Record<string, Tool> => ({
-  double: async (args) => ({ n: (args as In).n * 2 }),
-  broken: async () => {
+  double: tool(async (args) => ({ n: (args as In).n * 2 }), "Doubles a number."),
+  broken: tool(async () => {
     throw new Error("unavailable");
-  },
-  stuck: () => new Promise(() => {}),
+  }),
+  stuck: tool(() => new Promise(() => {})),
 });
 
 test("an answer that fits the output schema completes", async () => {
@@ -223,6 +235,7 @@ const scenario: Scenario<In, Out, never> = {
   inputSchema: z.strictObject({ n: z.number() }),
   outputSchema,
   expectedSchema: z.never(),
+  instructions: INSTRUCTIONS,
   datasets: {},
   evaluators: [],
   timeoutMs: 20,
@@ -271,7 +284,7 @@ test("a run records what was executed and one result per case, in dataset order"
   assert.deepEqual(run.manifest, {
     schemaVersion: 1,
     runId: "2026-10-04T09-00-00Z_demo_echo",
-    scenario: { id: "demo", version: "3" },
+    scenario: { id: "demo", version: "3", instructions: INSTRUCTIONS, tools: [] },
     dataset: { name: "dev", sha256: "b".repeat(64), caseCount: 3 },
     candidate: { id: "echo", version: "1", config: { mode: "echo" }, deterministic: true },
     settings: { timeoutMs: 20 },
@@ -301,13 +314,14 @@ type Question = { item: string };
 type World = { stock: number; lookupFails?: boolean };
 
 const worldScenario = {
+  instructions: INSTRUCTIONS,
   outputSchema: z.strictObject({ stock: z.number() }),
   timeoutMs: 20,
   tools: (c: Case<Question, never, World>): Record<string, Tool> => ({
-    lookup: async () => {
+    lookup: tool(async () => {
       if (c.setup!.lookupFails) throw new Error("unavailable");
       return c.setup!.stock;
-    },
+    }),
   }),
 };
 const askingTheTool: Pick<Candidate<Question, { stock: number }>, "run"> = {
@@ -340,8 +354,57 @@ test("the candidate is given the input and nothing else of the case", async () =
   assert.equal(received.length, 1);
   const [input, ctx, ...rest] = received[0]!;
   assert.deepEqual(input, { item: "kettle" });
-  assert.deepEqual(Object.keys(ctx as object).sort(), ["report", "signal", "tools"]);
+  // The instructions belong to the scenario and are the same for every case.
+  assert.deepEqual(Object.keys(ctx as object).sort(), ["instructions", "report", "signal", "tools"]);
   assert.deepEqual(rest, []);
   // It did not look anything up, so the hidden fact appears nowhere in what was recorded.
   assert.equal(JSON.stringify(result).includes("31337"), false);
+});
+
+// --- What a candidate is told ---------------------------------------------------
+
+test("a candidate can read the instructions and what each tool is for", async () => {
+  let told: unknown;
+  await runCase(
+    scenarioWith(tools),
+    candidate(async (_input, ctx) => {
+      told = {
+        instructions: ctx.instructions,
+        double: [ctx.tools.double!.description, ctx.tools.double!.parameters],
+        names: Object.keys(ctx.tools),
+      };
+      return { kind: "abstain", reason: "just looking" };
+    }),
+    c,
+  );
+  assert.deepEqual(told, {
+    instructions: INSTRUCTIONS,
+    double: ["Doubles a number.", { type: "object" }],
+    names: ["double", "broken", "stuck"],
+  });
+});
+
+test("a run records what every candidate was told: the instructions and the tools", async () => {
+  const { counting } = countingCandidate();
+  const run = await executeRun({ ...scenario, tools }, counting, dataset, { environment });
+  assert.equal(run.manifest.scenario.instructions, INSTRUCTIONS);
+  assert.deepEqual(run.manifest.scenario.tools, [
+    { name: "double", description: "Doubles a number.", parameters: { type: "object" } },
+    { name: "broken", description: "A test tool.", parameters: { type: "object" } },
+    { name: "stuck", description: "A test tool.", parameters: { type: "object" } },
+  ]);
+});
+
+test("a scenario that offers different tools from case to case is refused", async () => {
+  const { counting } = countingCandidate();
+  const shifting = {
+    ...scenario,
+    tools: (shifted: Case<In, never>) => ({
+      double: tool(async () => 0, shifted.input.n === 3 ? "Triples a number." : "Doubles a number."),
+    }),
+  };
+  await assert.rejects(
+    executeRun(shifting, counting, dataset, { environment }),
+    /offers different tools for case "c" than for case "a"/,
+  );
 });

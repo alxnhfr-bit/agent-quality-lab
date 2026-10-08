@@ -9,7 +9,7 @@
  * The inventory is fixed and part of the scenario version.
  */
 import { z } from "zod";
-import type { Evaluator, JsonValue, RunContext, Scenario, Tool } from "@agent-quality-lab/core";
+import { jsonSchemaOf, type Evaluator, type RunContext, type Scenario, type Tool } from "@agent-quality-lab/core";
 
 /** What every candidate is told. The comment above is for readers of this file. */
 const INSTRUCTIONS = `Say whether an order for a number of units of an item can be fulfilled.
@@ -53,7 +53,6 @@ const STOCK: Record<string, number> = { kettle: 12, lamp: 0, desk: 3, chair: 40,
 const FAILURES_BEFORE_SUCCESS: Record<string, number> = { mug: 1, sofa: Infinity };
 
 const getStockArgs = z.strictObject({ sku: z.string().describe("The item's SKU, such as kettle") });
-const { $schema: _, ...getStockParameters } = z.toJSONSchema(getStockArgs);
 
 function createTools(): Record<string, Tool> {
   const failures = new Map<string, number>();
@@ -61,7 +60,7 @@ function createTools(): Record<string, Tool> {
     getStock: {
       description:
         "Returns how many units of an item are in stock: {found: true, available: <number>}, or {found: false} when the item is unknown.",
-      parameters: getStockParameters as JsonValue,
+      parameters: jsonSchemaOf(getStockArgs),
       async run(args): Promise<Stock> {
         const { sku } = getStockArgs.parse(args);
         const failed = failures.get(sku) ?? 0;
@@ -133,6 +132,7 @@ const scenario: Scenario<Input, Output, Expected> = {
   version: "1",
   inputSchema,
   outputSchema,
+  answerFormat: jsonSchemaOf(outputSchema),
   expectedSchema,
   instructions: INSTRUCTIONS,
   datasets: { dev: new URL("./datasets/dev.jsonl", import.meta.url) },

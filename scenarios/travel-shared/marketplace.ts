@@ -6,7 +6,7 @@
  * plus what goes wrong with the lookups in that case.
  */
 import { z } from "zod";
-import type { JsonValue, RunContext, Tool } from "@agent-quality-lab/core";
+import { jsonSchemaOf, type JsonValue, type RunContext, type Tool } from "@agent-quality-lab/core";
 
 export const TOOL_NAMES = [
   "get_booking",
@@ -125,10 +125,9 @@ export function createTools(world: World): Record<ToolName, Tool> {
   const failedOnce = new Set<ToolName>();
 
   const lookup = <A>(name: ToolName, args: z.ZodType<A>, find: (args: A) => object | undefined): Tool => {
-    const { $schema: _, ...parameters } = z.toJSONSchema(args);
     return {
       description: `${DESCRIPTIONS[name]} Returns {found: true, record}, or {found: false} when there is no such record.`,
-      parameters: parameters as JsonValue,
+      parameters: jsonSchemaOf(args),
       async run(raw): Promise<JsonValue> {
         const fault = world.faults?.[name];
         if (fault === "unavailable" || (fault === "fails_once" && !failedOnce.has(name))) {

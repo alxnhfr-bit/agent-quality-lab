@@ -19,6 +19,8 @@ export function mockAgent(seed: number): Candidate<Input, Output> {
     version: "1",
     config: { seed, rates: RATES },
     deterministic: true,
+    // There is no model behind it, so its made-up model calls cost nothing.
+    prices: { currency: "USD", asOf: "2026-10-05", perMillionTokens: { mock: { input: 0, output: 0 } } },
     async run({ sku, quantity }, ctx) {
       const random = randomFor(`${seed}:${sku}:${quantity}`);
 

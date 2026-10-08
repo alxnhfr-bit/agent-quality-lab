@@ -9,6 +9,7 @@ import {
   type Manifest,
   type RunData,
   type RunSummary,
+  type SliceSummary,
 } from "@agent-quality-lab/core";
 
 export interface RunReport {
@@ -44,8 +45,15 @@ export function renderRun({ manifest, results, evaluations, summary, notes = [] 
     facts.push(["duration", `median ${ms(summary.durationMs.median)}, max ${ms(summary.durationMs.max)}`]);
   }
   facts.push(["tool calls", `${summary.toolCalls.total}, of which ${summary.toolCalls.failed} failed`]);
+  if (summary.modelCalls > 0) facts.push(["model calls", String(summary.modelCalls)]);
   if (summary.tokens) {
     facts.push(["tokens", `${summary.tokens.input} in, ${summary.tokens.output} out`]);
+  }
+  if (summary.cost && manifest.prices) {
+    facts.push([
+      "cost",
+      `${usd(summary.cost.total)} in total, ${usd(summary.cost.medianPerCase)} per case (median)${unpriced(summary)}, at prices of ${manifest.prices.asOf}`,
+    ]);
   }
   lines.push(...table(facts), "");
 
@@ -131,8 +139,15 @@ export function renderComparison(comparison: Comparison, a: RunData, b: RunData)
     row("max duration", (s) => (s.durationMs ? ms(s.durationMs.max) : "-")),
     row("tool calls", (s) => `${s.toolCalls.total} (${s.toolCalls.failed} failed)`),
   ];
+  if (runs.some((run) => run.summary.modelCalls > 0)) rows.push(row("model calls", (s) => String(s.modelCalls)));
   if (runs.some((run) => run.summary.tokens)) {
     rows.push(row("tokens", (s) => (s.tokens ? `${s.tokens.input} in, ${s.tokens.output} out` : "none reported")));
+  }
+  if (runs.some((run) => run.summary.cost)) {
+    rows.push(
+      row("cost", (s) => (s.cost ? `${usd(s.cost.total)}${unpriced(s)}` : "-")),
+      row("cost per case (median)", (s) => (s.cost ? usd(s.cost.medianPerCase) : "-")),
+    );
   }
   lines.push(...table(rows), "");
 
@@ -251,7 +266,19 @@ function describeFailure(result: CaseResult): string[] {
 }
 
 export function ms(value: number): string {
+  if (value >= 1000) return `${(value / 1000).toFixed(1)} s`;
   return `${value < 10 ? value.toFixed(2) : value.toFixed(0)} ms`;
+}
+
+/** Small amounts keep four decimals, since one case often costs a fraction of a cent. */
+export function usd(value: number): string {
+  return `$${value.toFixed(value < 1 ? 4 : 2)}`;
+}
+
+/** Says so when some model calls are missing from a cost. */
+export function unpriced(summary: SliceSummary): string {
+  const count = summary.cost?.unpricedModelCalls ?? 0;
+  return count === 0 ? "" : `, ${count} model call${count === 1 ? "" : "s"} not priced`;
 }
 
 /** Pads every column but the last to the width of its longest cell. */

@@ -161,6 +161,7 @@ test("a comparison shows both runs side by side, then where they differ", () => 
       "median duration   3.00 ms        8.00 ms",
       "max duration      20 ms          12 ms",
       "tool calls        1 (0 failed)   2 (1 failed)",
+      "model calls       0              1",
       "tokens            none reported  30 in, 4 out",
       "",
       "by evaluator",

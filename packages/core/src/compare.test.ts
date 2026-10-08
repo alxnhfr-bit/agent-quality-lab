@@ -45,8 +45,11 @@ function run(candidateId: string, cases: [CaseResult, Outcome][], overrides: Par
     evaluator: { id: "correct", version: "1" },
     verdict: outcome === "pass" || outcome === "fail" ? { outcome } : { outcome, detail: "x" },
   }));
+  const described = manifest(candidateId, overrides);
+  // A run with a result for every case, unless a test says otherwise.
+  if (!overrides.dataset) described.dataset = { ...described.dataset, caseCount: cases.length };
   return {
-    manifest: manifest(candidateId, overrides),
+    manifest: described,
     cases: cases.map(([{ caseId }]) => ({ id: caseId, input: null, ...(TAGS[caseId] && { tags: TAGS[caseId] }) })),
     results: cases.map(([result]) => result),
     evaluations,
@@ -222,4 +225,21 @@ test("a run made before instructions were recorded can still be compared", () =>
     scenario: { id: "demo", version: "1", instructions: "Answer briefly.", tools: [] },
   });
   assert.deepEqual(comparability(recorded, run("second", [])), []);
+});
+
+test("a run that was stopped or interrupted is refused, with what it has and why", () => {
+  const id = b.manifest.runId;
+  const stopped: RunData = {
+    ...b,
+    manifest: { ...b.manifest, stopped: { reason: "the spending limit of 5.00 USD was passed after 4 of 6 cases" } },
+    results: b.results.slice(0, 4),
+  };
+  assert.deepEqual(comparability(a, stopped), [
+    `${id} is incomplete, with 4 of 6 cases: the spending limit of 5.00 USD was passed after 4 of 6 cases`,
+  ]);
+
+  const { finishedAt: _, ...unfinished } = b.manifest;
+  assert.deepEqual(comparability(a, { ...b, manifest: unfinished, results: b.results.slice(0, 2) }), [
+    `${id} is incomplete, with 2 of 6 cases`,
+  ]);
 });

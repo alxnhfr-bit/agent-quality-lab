@@ -10,7 +10,7 @@
  * wrong, in its setup.
  */
 import { z } from "zod";
-import type { Evaluator, Scenario, TraceEvent } from "@agent-quality-lab/core";
+import { jsonSchemaOf, type Evaluator, type Scenario, type TraceEvent } from "@agent-quality-lab/core";
 import { TOOL_NAMES, createTools, moneySchema, worldSchema, type ToolName, type World } from "../travel-shared/marketplace.ts";
 
 const INSTRUCTIONS = `A traveler asks about cancelling a booking. Work out what cancelling would cost them.
@@ -167,16 +167,18 @@ function argument(call: ToolCall, name: string): unknown {
 
 const scenario: Scenario<Input, Output, Expected, World> = {
   id: "travel-cancellation",
-  version: "1",
+  version: "2",
   inputSchema,
   outputSchema,
+  answerFormat: jsonSchemaOf(outputSchema),
   expectedSchema,
   setupSchema: worldSchema,
   instructions: INSTRUCTIONS,
   datasets: { dev: new URL("./datasets/dev.jsonl", import.meta.url) },
   tools: (c) => createTools(c.setup!),
   evaluators: [outcome, amount, evidence, toolUse],
-  timeoutMs: 500,
+  // Generous enough for a candidate that calls a model several times per case.
+  timeoutMs: 60_000,
 };
 
 export default scenario;

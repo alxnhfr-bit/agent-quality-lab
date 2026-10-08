@@ -4,7 +4,7 @@ A small lab for testing and comparing agentic systems. Give the same task to dif
 
 An implementation can be anything that takes the task input and returns a result: a model with a prompt, a tool-using agent, a workflow engine, a plain program. The lab does not care how it works inside and never asks for hidden reasoning.
 
-**Status:** an early version. It ships with two synthetic scenarios and has no adapter for any real model or agent yet. See [Known limitations](#known-limitations).
+**Status:** an early version. It ships with two synthetic scenarios, four plain programs as candidates, and a candidate that hands a task to a Claude model. No results from a real model are published here yet. See [Known limitations](#known-limitations).
 
 ## The problem
 
@@ -110,12 +110,27 @@ npx aql eval runs/*_stock-check_mock-agent
 
 The same commands work for `travel-cancellation`, whose candidates are `rules` and `naive`.
 
+### Running a model
+
+`haiku`, `sonnet` and `opus` are candidates that hand the task to a Claude model. They work for any scenario, because everything they tell the model comes from the scenario: its instructions, its tools and the shape of an answer. They call the Anthropic API, so they need credentials in the environment (`ANTHROPIC_API_KEY`) and they cost money.
+
+```bash
+npx aql run travel-cancellation --candidate haiku --concurrency 4
+```
+
+- `--concurrency` runs several cases at once. A model takes seconds per case.
+- `--max-cost` stops a run once its model calls have cost more than the given number of US dollars. The default is 5.
+- Each result is saved as it arrives. A run that is stopped or interrupted keeps what it had, is marked incomplete, and cannot be scored or compared.
+- A run that cannot start at all, for example without credentials, stops at once and saves nothing.
+
+A run records the prices its cost was worked out from, so the figure can be checked later.
+
 ## The scenarios
 
 | Scenario | The task | What it stresses |
 |---|---|---|
 | `stock-check` | Can an order for some units of an item be fulfilled? One lookup tool. 12 cases | Every way a case can end, abstaining, a tool that fails, guessing |
-| `travel-cancellation` | What does it cost to cancel this booking? Six lookup tools, four of them needed. 20 cases | Policy rules, time zones, a source that should not be trusted, records that contradict each other, escalating to a human |
+| `travel-cancellation` | What does it cost to cancel this booking? Six lookup tools, four of them needed. 24 cases | Policy rules, time zones, a source that should not be trusted, records that contradict each other, escalating to a human |
 
 In `travel-cancellation` every case has its own small world of made-up records, and its own things that go wrong. It separates two ways of not answering: abstaining when the facts cannot be obtained, and escalating when the records were obtained but contradict each other. An escalation is an ordinary answer that this scenario defines; the lab itself only knows answers and abstentions.
 
@@ -158,17 +173,17 @@ cases that differ in status or verdicts (8 of 12)
 
 ### travel-cancellation
 
-`rules` follows the task's rules step by step. `naive` makes four typical mistakes: it reads check-in times as UTC, believes the property's own description, never escalates, and gives up after one failed lookup.
+`rules` follows the task's rules step by step. `naive` makes four typical mistakes: it reads check-in times as UTC, believes the property's own description, never escalates, and gives up after one failed lookup. Both work out when the traveler means to cancel from the single word "tomorrow".
 
 | | rules | naive |
 |---|---:|---:|
-| Completed | 20/20 | 20/20 |
-| Outcome: pass | 20/20 | 17/20 |
-| Amount: pass | 14/14 | 9/14 |
-| Evidence: pass | 20/20 | 19/20 |
-| Tool use: pass | 20/20 | 20/20 |
+| Completed | 24/24 | 24/24 |
+| Outcome: pass | 24/24 | 21/24 |
+| Amount: pass | 14/18 | 9/18 |
+| Evidence: pass | 24/24 | 23/24 |
+| Tool use: pass | 24/24 | 24/24 |
 
-The amount check applies to the 14 cases where a fee is due. The totals say that `naive` gets 7 of the 20 cases wrong in some way; the breakdown by tag, abridged here, says where:
+The amount check applies to the 18 cases where a fee is due. The breakdown by tag, abridged here, says where each one goes wrong:
 
 ```text
 tag                  cases  outcome pass A · B  amount pass A · B
@@ -177,16 +192,17 @@ time-zone            2      2/2 · 2/2           2/2 · 0/2
 conflicting-content  2      2/2 · 2/2           2/2 · 0/2
 should-escalate      2      2/2 · 0/2           n/a
 should-abstain       4      4/4 · 4/4           n/a
+reworded             4      4/4 · 4/4           0/4 · 0/4
 ...
 ```
 
-It gets every time-zone case and every case with a misleading property page wrong, never escalates, and handles the deadline boundaries and the abstentions correctly.
+`naive` gets every time-zone case and every case with a misleading property page wrong, and never escalates. Both programs get all four reworded questions wrong, such as "what would it cost to cancel in 48 hours?": a rule keyed to one word cannot read them. Everything else `rules` gets right.
 
 Both examples are reproducible: all four candidates are deterministic, so every run gives the same statuses, outputs and verdicts. Durations differ from run to run.
 
 ## What this evidence does and does not support
 
-All four candidates are synthetic programs. In `stock-check`, `baseline` is a short program and `mock-agent` has no model behind it: it is a stand-in with seeded faults, built so that a single run exercises every way a case can end. The token counts it reports are made up. In `travel-cancellation`, `naive` was written to make four chosen mistakes.
+All four candidates in these examples are synthetic programs. In `stock-check`, `baseline` is a short program and `mock-agent` has no model behind it: it is a stand-in with seeded faults, built so that a single run exercises every way a case can end. The token counts it reports are made up. In `travel-cancellation`, `naive` was written to make four chosen mistakes.
 
 The example supports these statements:
 
@@ -198,23 +214,25 @@ The example supports these statements:
 
 It does not support these:
 
-- Anything about a real model, agent or framework. None has been run through the lab.
+- Anything about a real model, agent or framework. The model candidates exist, and no result from one is published here.
 - That the mock agent's failure rates, or the naive candidate's mistakes, resemble any real system.
 - That the abstractions fit very different agents. Two scenarios have exercised them, both with plain programs as candidates.
 - That an explanation is any good. `travel-cancellation` records the explanation each answer gives and no check judges it.
-- Anything about latency or cost. The durations are those of local function calls.
+- Anything about latency or cost. The durations are those of local function calls, and the mock agent's calls are priced at zero.
 
 ## Known limitations
 
 Scope:
 
-- There are two synthetic scenarios, and no adapter for a model provider or an agent framework. A candidate is a TypeScript module in the scenario's directory.
+- There are two synthetic scenarios. One model provider is supported, Anthropic, and no agent framework. A candidate is a TypeScript module.
 
 Measurement:
 
 - A comparison uses one run per side. There are no repeated trials and no estimate of run-to-run noise, which is why a comparison describes differences and calls none of them a regression.
 - The lab sees only what goes through its own tools. A candidate's own tool calls, model calls and fallbacks appear only if the candidate reports them. A silent fallback inside an opaque candidate cannot be detected.
-- Token counts are whatever the candidate reports, and there is no cost estimate.
+- Model calls and their token counts are reported by the candidate. For the model candidates they are the provider's own figures, passed on.
+- A cost is those token counts at a price list kept in the repository by hand and saved with each run. It is not the provider's bill, and the list can go out of date. A call that cannot be priced is counted as such, not as free.
+- A request the provider fails, for example under a rate limit, is recorded as an error of that case. It counts against the candidate although the candidate did nothing wrong, so such a run is better repeated.
 - Durations are wall-clock time on the machine that ran the lab, summarised as median and maximum.
 - Versions of scenarios, candidates and evaluators are strings their authors declare. The lab records them with the dataset hash and the git commit, but cannot check that a version was changed when behaviour changed.
 - Evaluators are deterministic code. There is no human review and no model-based judging.
@@ -222,10 +240,10 @@ Measurement:
 
 Engineering:
 
-- Cases run one at a time and results are written when the run finishes, so a crash during a run loses its results.
+- An incomplete run cannot be resumed. It has to be run again from the start.
 - A candidate that exceeds the time limit is signalled to stop, not killed.
 - `aql eval` replaces all of a run's evaluations.
-- A candidate's configuration cannot be changed from the command line.
+- A candidate's configuration cannot be changed from the command line. A different model or setting is a different candidate file.
 - The run format is at version 1 and may change.
 - Runs and HTML reports contain the dataset's inputs and expected values. Keep that in mind before publishing them for a held-out set.
 
@@ -237,10 +255,12 @@ The CLI finds scenarios and candidates by location:
 scenarios/<scenario>/
   scenario.ts          default-exports the scenario; its id must match the directory name
   datasets/*.jsonl     one case per line: id, input, and optionally expected, setup and tags
-  candidates/<name>.ts default-exports a candidate
+  candidates/<name>.ts default-exports a candidate for this scenario
+
+candidates/<name>.ts   default-exports a candidate that works for any scenario
 ```
 
-A scenario states its task as written instructions, and each of its tools carries a description and the arguments it accepts. A candidate that has to be told what to do, such as a model, reads them; a plain program can ignore them. No candidate in this repository uses them yet.
+A scenario states its task as written instructions, says what shape an answer has, and gives each of its tools a description and the arguments it accepts. A candidate that has to be told what to do, such as a model, reads them; a plain program can ignore them.
 
 Tags are free labels on a case, such as `boundary` or `tool-failure`. Summaries, comparisons and the HTML report repeat every count per tag, so a weakness on one kind of case stays visible.
 
@@ -251,10 +271,12 @@ A case can carry a `setup`: the facts of that one case, such as what a lookup re
 ## Repository layout
 
 ```text
-packages/core   run format, runner, evaluation, summaries and comparison. No dependency on the CLI
-packages/cli    the aql command and the text and HTML rendering
-scenarios       scenarios with their datasets and candidates
-runs            written by aql run; ignored by git
+packages/core    run format, runner, evaluation, summaries, cost and comparison. No dependency on the CLI
+packages/cli     the aql command and the text and HTML rendering
+packages/models  a candidate that hands a task to a model, and the one file that talks to a model provider
+scenarios        scenarios with their datasets and candidates
+candidates       candidates that work for any scenario
+runs             written by aql run; ignored by git
 ```
 
 Core returns plain data and the CLI only formats it, so another interface can read the same run files and call the same functions.

@@ -1,6 +1,7 @@
 /**
  * Executes a candidate against the cases of a dataset and records what it
- * observably did. No filesystem access: a run is returned as plain data.
+ * observably did. No filesystem access: a run is returned as plain data, and
+ * the caller can be told about each result as it arrives.
  *
  * The runner never retries and never substitutes an output. Each case ends in
  * exactly one of four ways (completed, malformed_output, error, timeout) and is
@@ -18,7 +19,17 @@ import {
   type Manifest,
   type TraceEvent,
 } from "./artifact.ts";
-import type { AvailableTool, Candidate, Case, Dataset, RunContext, Scenario, Tool } from "./types.ts";
+import { costOf } from "./cost.ts";
+import {
+  CandidateUnavailable,
+  type AvailableTool,
+  type Candidate,
+  type Case,
+  type Dataset,
+  type RunContext,
+  type Scenario,
+  type Tool,
+} from "./types.ts";
 
 export interface Run {
   manifest: Manifest;
@@ -33,13 +44,26 @@ export interface RunOptions {
   clock?: () => number;
   /** Applied to stack traces before they are recorded, e.g. to keep local paths out of a run. */
   cleanStack?: (stack: string) => string;
-  onCaseDone?: (result: CaseResult, done: number, total: number) => void;
+  /** How many cases run at the same time. One by default. */
+  concurrency?: number;
+  /**
+   * Once the model calls so far have cost more than this, no further case is
+   * started and the run is recorded as stopped. In the currency of the candidate's prices.
+   */
+  maxCost?: number;
+  /** Called once before the first case, with the manifest as far as it is known. */
+  onStart?: (manifest: Manifest) => void | Promise<void>;
+  /** Called as each case finishes, in the order they finish. */
+  onCaseDone?: (result: CaseResult, done: number, total: number) => void | Promise<void>;
 }
 
 type Clock = () => number;
 type ToolCall = Extract<TraceEvent, { type: "tool_call" }>;
 type OfferedTools = NonNullable<Manifest["scenario"]["tools"]>;
-type CaseScenario<I, O, E, S> = Pick<Scenario<I, O, E, S>, "instructions" | "tools" | "outputSchema" | "timeoutMs">;
+type CaseScenario<I, O, E, S> = Pick<
+  Scenario<I, O, E, S>,
+  "instructions" | "answerFormat" | "tools" | "outputSchema" | "timeoutMs"
+>;
 type Settled =
   | { how: "returned"; value: unknown }
   | { how: "threw"; error: unknown }
@@ -54,48 +78,86 @@ export async function executeRun<I, O, E, S>(
   options: RunOptions,
 ): Promise<Run> {
   const now = options.now ?? (() => new Date());
+  const total = dataset.cases.length;
+  const concurrency = Math.max(1, Math.min(options.concurrency ?? 1, total));
 
-  // Checked before any case runs, so a candidate that cannot be recorded fails fast.
-  const candidateInfo = manifestSchema.shape.candidate.parse({
-    id: candidate.id,
-    version: candidate.version,
-    config: candidate.config,
-    deterministic: candidate.deterministic,
-  });
+  // What every candidate is offered is one fact about the run, so it is taken from the
+  // first case and every other case has to match it.
+  const first = dataset.cases[0];
+  const offered = first ? describeTools(scenario.tools?.(first) ?? {}) : [];
 
   const startedAt = now();
-  const results: CaseResult[] = [];
-  let offered: { tools: OfferedTools; caseId: string } | undefined;
-  for (const c of dataset.cases) {
-    const { result, tools } = await executeCase(scenario, candidate, c, options);
-    // One description of the task holds for the whole run, so the tools may not change between cases.
-    offered ??= { tools, caseId: c.id };
-    if (JSON.stringify(tools) !== JSON.stringify(offered.tools)) {
-      throw new Error(
-        `scenario "${scenario.id}" offers different tools for case "${c.id}" than for case "${offered.caseId}"`,
-      );
-    }
-    results.push(result);
-    options.onCaseDone?.(result, results.length, dataset.cases.length);
-  }
-
-  const manifest = manifestSchema.parse({
+  // Checked before any case runs, so a candidate that cannot be recorded fails fast.
+  const started = manifestSchema.parse({
     schemaVersion: SCHEMA_VERSION,
     runId: runIdFor(startedAt, scenario.id, candidate.id),
     scenario: {
       id: scenario.id,
       version: scenario.version,
       instructions: scenario.instructions,
-      tools: offered?.tools ?? [],
+      tools: offered,
     },
-    dataset: { name: dataset.name, sha256: dataset.sha256, caseCount: dataset.cases.length },
-    candidate: candidateInfo,
-    settings: { timeoutMs: scenario.timeoutMs },
+    dataset: { name: dataset.name, sha256: dataset.sha256, caseCount: total },
+    candidate: {
+      id: candidate.id,
+      version: candidate.version,
+      config: candidate.config,
+      deterministic: candidate.deterministic,
+    },
+    settings: { timeoutMs: scenario.timeoutMs, concurrency },
+    ...(candidate.prices && { prices: candidate.prices }),
     startedAt: startedAt.toISOString(),
-    finishedAt: now().toISOString(),
     environment: options.environment,
   });
-  return { manifest, results };
+  await options.onStart?.(started);
+
+  const results = new Array<CaseResult | undefined>(total);
+  const waiting = [...dataset.cases.entries()];
+  let done = 0;
+  let spent = 0;
+  let stopped: string | undefined;
+
+  const work = async () => {
+    for (let next = waiting.shift(); next && stopped === undefined; next = waiting.shift()) {
+      const [index, c] = next;
+      let executed;
+      try {
+        executed = await executeCase(scenario, candidate, c, options);
+      } catch (error) {
+        if (!(error instanceof CandidateUnavailable)) throw error;
+        stopped ??= `the candidate could not run: ${error.message}`;
+        return;
+      }
+      const { result, tools } = executed;
+      if (JSON.stringify(tools) !== JSON.stringify(offered)) {
+        throw new Error(
+          `scenario "${scenario.id}" offers different tools for case "${c.id}" than for case "${first!.id}"`,
+        );
+      }
+      results[index] = result;
+      done += 1;
+      await options.onCaseDone?.(result, done, total);
+
+      if (options.maxCost === undefined) continue;
+      const cost = costOf(result.trace, started.prices);
+      spent += cost.total;
+      const limit = `the spending limit of ${options.maxCost.toFixed(2)} USD`;
+      if (cost.unpriced > 0) {
+        stopped ??= `a model call could not be priced, so ${limit} cannot be enforced`;
+      } else if (spent > options.maxCost) {
+        stopped ??= `${limit} was passed after ${done} of ${total} cases`;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: concurrency }, work));
+
+  const manifest = manifestSchema.parse({
+    ...started,
+    finishedAt: now().toISOString(),
+    ...(stopped !== undefined && { stopped: { reason: stopped } }),
+  });
+  // In dataset order, whatever order the cases finished in.
+  return { manifest, results: results.filter((result) => result !== undefined) };
 }
 
 export async function runCase<I, O, E, S>(
@@ -115,12 +177,11 @@ async function executeCase<I, O, E, S>(
   options: Pick<RunOptions, "clock" | "cleanStack">,
 ): Promise<{ result: CaseResult; tools: OfferedTools }> {
   const caseTools = scenario.tools?.(c) ?? {};
-  const tools = Object.entries(caseTools).map(([name, { description, parameters }]) => ({
-    name,
-    description,
-    parameters,
-  }));
-  return { result: await runWithTools(scenario, candidate, c, caseTools, options), tools };
+  return { result: await runWithTools(scenario, candidate, c, caseTools, options), tools: describeTools(caseTools) };
+}
+
+function describeTools(tools: Record<string, Tool>): OfferedTools {
+  return Object.entries(tools).map(([name, { description, parameters }]) => ({ name, description, parameters }));
 }
 
 async function runWithTools<I, O, E, S>(
@@ -138,6 +199,7 @@ async function runWithTools<I, O, E, S>(
 
   const ctx: RunContext = {
     instructions: scenario.instructions,
+    answerFormat: scenario.answerFormat,
     tools: observe(caseTools, trace, clock, () => open),
     report(event) {
       if (!open) return;
@@ -177,6 +239,8 @@ async function runWithTools<I, O, E, S>(
     return { ...base, status: "timeout", timeoutMs: scenario.timeoutMs };
   }
   if (settled.how === "threw") {
+    // Not a result for this case: the candidate is saying it cannot run at all.
+    if (settled.error instanceof CandidateUnavailable) throw settled.error;
     return { ...base, status: "error", error: describeError(settled.error, options.cleanStack) };
   }
 

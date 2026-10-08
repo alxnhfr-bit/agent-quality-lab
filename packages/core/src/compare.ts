@@ -74,6 +74,16 @@ export interface CaseSide {
  */
 export function comparability(a: RunData, b: RunData): string[] {
   const [ma, mb] = [a.manifest, b.manifest];
+  const incomplete = (ma.runId === mb.runId ? [a] : [a, b]).flatMap(({ manifest, results }) => {
+    const whole =
+      manifest.finishedAt !== undefined &&
+      manifest.stopped === undefined &&
+      results.length === manifest.dataset.caseCount;
+    if (whole) return [];
+    const why = manifest.stopped ? `: ${manifest.stopped.reason}` : "";
+    return [`${manifest.runId} is incomplete, with ${results.length} of ${manifest.dataset.caseCount} cases${why}`];
+  });
+  if (incomplete.length > 0) return incomplete;
   if (ma.scenario.id !== mb.scenario.id) {
     return [`they are runs of different scenarios (${ma.scenario.id} and ${mb.scenario.id})`];
   }
@@ -155,7 +165,7 @@ function comparedRun(run: RunData): ComparedRun {
   return {
     runId: run.manifest.runId,
     candidate: run.manifest.candidate,
-    summary: summarize(run.results, run.evaluations ?? [], run.cases),
+    summary: summarize(run.results, run.evaluations ?? [], run.cases, run.manifest.prices),
   };
 }
 

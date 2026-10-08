@@ -1,0 +1,14 @@
+{
+  "name": "@agent-quality-lab/models",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./anthropic": "./src/anthropic.ts"
+  },
+  "dependencies": {
+    "@agent-quality-lab/core": "*",
+    "@anthropic-ai/sdk": "^0.131.0"
+  }
+}

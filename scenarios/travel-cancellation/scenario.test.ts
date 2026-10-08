@@ -43,17 +43,24 @@ async function verdictsOn(caseId: string, candidate: Run) {
 const lookupsIn = (trace: readonly TraceEvent[]) =>
   trace.flatMap((event) => (event.type === "tool_call" ? [`${event.name}${event.error === undefined ? "" : " failed"}`] : []));
 
-test("the dev dataset has twenty cases, each with its own world", () => {
+const REWORDED = ["later-in-hours", "later-in-two-days", "cancel-at-stated-time", "tomorrow-mentioned-but-now"];
+
+test("the dev dataset has twenty-four cases, each with its own world", () => {
   const decisions = dataset.cases.map((c) => c.expected?.decision);
-  assert.equal(dataset.cases.length, 20);
-  assert.equal(decisions.filter((d) => d === "cancellation_fee").length, 14);
+  assert.equal(dataset.cases.length, 24);
+  assert.deepEqual(
+    dataset.cases.filter((c) => c.tags?.includes("reworded")).map((c) => c.id),
+    REWORDED,
+  );
+  assert.equal(decisions.filter((d) => d === "cancellation_fee").length, 18);
   assert.equal(decisions.filter((d) => d === "escalate").length, 2);
   assert.equal(decisions.filter((d) => d === "abstain").length, 4);
   assert.ok(dataset.cases.every((c) => c.setup !== undefined));
 });
 
-test("the reference candidate passes every check on every case", async () => {
-  assert.deepEqual(await failures(rules), { outcome: [], amount: [], evidence: [], "tool-use": [] });
+test("the reference candidate is right everywhere except where the question is reworded", async () => {
+  // It reads the time a traveler means from the one word "tomorrow", so other wordings lose it.
+  assert.deepEqual(await failures(rules), { outcome: [], amount: REWORDED, evidence: [], "tool-use": [] });
 });
 
 test("the naive candidate fails exactly where its four mistakes bite", async () => {
@@ -67,6 +74,8 @@ test("the naive candidate fails exactly where its four mistakes bite", async () 
       "page-promises-free-saver-rate",
       "page-promises-free-standard-rate",
       "policy-lookup-fails-once",
+      // It reads the time a traveler means the same way the reference does.
+      ...REWORDED,
     ],
     evidence: ["policy-lookup-fails-once"],
     "tool-use": [],

@@ -55,7 +55,9 @@ test("every count is the list of cases behind it", () => {
     ],
     durationMs: { median: 3, max: 20 },
     toolCalls: { total: 2, failed: 1 },
+    modelCalls: 2,
     tokens: { input: 15, output: 3 },
+    cost: null,
     byTag: [],
   });
 });
@@ -90,7 +92,9 @@ test("nothing is invented for what was not measured", () => {
     evaluators: [],
     durationMs: null,
     toolCalls: { total: 0, failed: 0 },
+    modelCalls: 0,
     tokens: null,
+    cost: null,
     byTag: [],
   });
   assert.equal(summarize(results.slice(2), []).tokens, null);
@@ -142,4 +146,15 @@ test("a pass count is out of the cases the evaluator applies to", () => {
   // Not applicable is left out. Not completed and an evaluator error are not passes, and still count.
   assert.deepEqual(passRate(summary, "style"), { pass: 1, of: 3 });
   assert.deepEqual(passRate(summary, "unknown"), { pass: 0, of: 0 });
+});
+
+test("with prices, a summary says what the model calls cost in total and per case", () => {
+  const prices = { currency: "USD" as const, asOf: "2026-09-25", perMillionTokens: { m: { input: 1000, output: 10000 } } };
+  // Case a: 10 in, 2 out = 0.01 + 0.02. Case b: 5 in, 1 out = 0.005 + 0.01. Cases c and d call no model.
+  assert.deepEqual(summarize(results, [], [], prices).cost, { total: 0.045, medianPerCase: 0.0075, unpricedModelCalls: 0 });
+  assert.deepEqual(summarize(results, [], [], { ...prices, perMillionTokens: {} }).cost, {
+    total: 0,
+    medianPerCase: 0,
+    unpricedModelCalls: 2,
+  });
 });

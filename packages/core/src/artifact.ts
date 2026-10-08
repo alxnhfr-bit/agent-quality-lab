@@ -41,9 +41,27 @@ const eventBase = {
   source: z.enum(["observed", "reported"]),
 };
 
+const tokens = z.number().int().nonnegative();
+
 export const usageSchema = z.strictObject({
-  inputTokens: z.number().int().nonnegative(),
-  outputTokens: z.number().int().nonnegative(),
+  /** Input billed at the normal rate. Input served from or written to a cache is counted below. */
+  inputTokens: tokens,
+  outputTokens: tokens,
+  cacheReadTokens: tokens.optional(),
+  cacheWriteTokens: tokens.optional(),
+});
+
+const price = z.number().nonnegative();
+
+/** What a model's tokens cost when the run was made, so a cost can be worked out and checked later. */
+export const pricesSchema = z.strictObject({
+  currency: z.literal("USD"),
+  /** The day the prices were looked up. */
+  asOf: z.iso.date(),
+  perMillionTokens: z.record(
+    z.string(),
+    z.strictObject({ input: price, output: price, cacheRead: price.optional(), cacheWrite: price.optional() }),
+  ),
 });
 
 export const traceEventSchema = z.discriminatedUnion("type", [
@@ -198,9 +216,17 @@ export const manifestSchema = z.strictObject({
     /** Declared by the candidate. When false, a single run is one sample, not the answer. */
     deterministic: z.boolean(),
   }),
-  settings: z.strictObject({ timeoutMs: z.number().positive() }),
+  settings: z.strictObject({
+    timeoutMs: z.number().positive(),
+    /** How many cases ran at the same time. Absent in runs made before this was recorded. */
+    concurrency: z.number().int().positive().optional(),
+  }),
+  prices: pricesSchema.optional(),
   startedAt: z.iso.datetime(),
-  finishedAt: z.iso.datetime(),
+  /** Absent while a run is under way, and for good if it was interrupted. */
+  finishedAt: z.iso.datetime().optional(),
+  /** Present when the run was stopped before every case had run. */
+  stopped: z.strictObject({ reason: z.string().min(1) }).optional(),
   environment: z.strictObject({
     node: z.string(),
     platform: z.string(),
@@ -210,6 +236,7 @@ export const manifestSchema = z.strictObject({
 });
 
 export type Usage = z.infer<typeof usageSchema>;
+export type Prices = z.infer<typeof pricesSchema>;
 export type TraceEvent = z.infer<typeof traceEventSchema>;
 export type CaseResult = z.infer<typeof caseResultSchema>;
 export type Judgment = z.infer<typeof judgmentSchema>;

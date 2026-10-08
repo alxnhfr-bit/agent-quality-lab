@@ -7,7 +7,7 @@
  *   E  ground truth, in whatever shape the scenario's evaluators need
  *   S  the hidden facts of a case, for scenarios whose tools depend on the case
  */
-import type { JsonValue, Judgment, TraceEvent } from "./artifact.ts";
+import type { JsonValue, Judgment, Prices, TraceEvent } from "./artifact.ts";
 
 /** Anything with a zod-compatible `safeParse`, so scenarios are not tied to one validator. */
 export interface Schema<T> {
@@ -66,6 +66,8 @@ export type ReportedEvent = DistributiveOmit<TraceEvent, "seq" | "source">;
 export interface RunContext {
   /** The task in the scenario's words. A candidate that has to be told what to do reads it here. */
   instructions: string;
+  /** The shape an answer must have, as a JSON Schema. */
+  answerFormat: JsonValue;
   /** Empty when the scenario provides no tools. */
   tools: Readonly<Record<string, AvailableTool>>;
   /**
@@ -77,6 +79,13 @@ export interface RunContext {
   signal: AbortSignal;
 }
 
+/**
+ * Thrown by a candidate that cannot run at all, as opposed to failing on a case:
+ * its credentials are missing, say, or its service is not set up. It stops the
+ * run, since a result recorded for such a case would measure the setup, not the candidate.
+ */
+export class CandidateUnavailable extends Error {}
+
 /** Any system that takes a case input and produces an output: a model, an agent, a workflow, a program. */
 export interface Candidate<I, O> {
   id: string;
@@ -85,6 +94,8 @@ export interface Candidate<I, O> {
   config: JsonValue;
   /** Whether the same input and config are expected to produce the same output. */
   deterministic: boolean;
+  /** What the models this candidate calls cost. Recorded with the run so its cost can be worked out. */
+  prices?: Prices;
   run(input: I, ctx: RunContext): Promise<CandidateOutput<O>>;
 }
 
@@ -108,6 +119,8 @@ export interface Scenario<I, O, E, S = undefined> {
   version: string;
   inputSchema: Schema<I>;
   outputSchema: Schema<O>;
+  /** The shape of an answer as a JSON Schema, for candidates that have to be told. It describes what `outputSchema` checks. */
+  answerFormat: JsonValue;
   expectedSchema: Schema<E>;
   /** Required for a scenario whose cases carry a setup; a dataset with setups is refused without it. */
   setupSchema?: Schema<S>;

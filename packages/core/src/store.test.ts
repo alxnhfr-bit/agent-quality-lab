@@ -9,6 +9,7 @@ import type { Run } from "./runner.ts";
 import {
   loadDataset,
   loadRun,
+  openRun,
   parseDataset,
   projectRoot,
   readEnvironment,
@@ -165,6 +166,7 @@ test("a stored run loads without evaluations until it has been scored", async ()
     ],
     results: run.results,
     evaluations: null,
+    complete: true,
   });
 
   const evaluations = [
@@ -217,4 +219,60 @@ test("stack traces are made relative to the project, and other paths are left al
 test("outside a git checkout the project root is the directory itself", async () => {
   const dir = await mkdtemp(join(tmpdir(), "aql-"));
   assert.equal(projectRoot(dir), dir);
+});
+
+test("a run interrupted part-way keeps what it had, and loads as incomplete", async () => {
+  const dataset = parseDataset(schemas, "dev", text);
+  const { manifest, results } = runFor(dataset);
+  const { finishedAt: _, ...started } = manifest;
+
+  const writer = await openRun(await mkdtemp(join(tmpdir(), "aql-")), started, dataset);
+  await writer.append(results[1]!);
+  // Nothing after this: the process is gone before the run could finish.
+
+  const loaded = await loadRun(writer.dir);
+  assert.equal(loaded.complete, false);
+  assert.equal(loaded.manifest.finishedAt, undefined);
+  assert.deepEqual(loaded.results, [results[1]]);
+});
+
+test("results saved in the order they finished are read back in dataset order", async () => {
+  const dataset = parseDataset(schemas, "dev", text);
+  const { manifest, results } = runFor(dataset);
+  const { finishedAt: _, ...started } = manifest;
+
+  const writer = await openRun(await mkdtemp(join(tmpdir(), "aql-")), started, dataset);
+  await writer.append(results[1]!);
+  await writer.append(results[0]!);
+  await writer.finish(manifest);
+
+  const loaded = await loadRun(writer.dir);
+  assert.equal(loaded.complete, true);
+  assert.deepEqual(loaded.results.map((result) => result.caseId), ["a", "b"]);
+});
+
+test("a run that was stopped loads with fewer results, and one that claims to be whole does not", async () => {
+  const dataset = parseDataset(schemas, "dev", text);
+  const run = runFor(dataset);
+  const stopped = { ...run.manifest, stopped: { reason: "the spending limit was passed" } };
+
+  const dir = await writeRun(await mkdtemp(join(tmpdir(), "aql-")), { manifest: stopped, results: run.results.slice(0, 1) }, dataset);
+  const loaded = await loadRun(dir);
+  assert.equal(loaded.complete, false);
+  assert.equal(loaded.results.length, 1);
+
+  await writeFile(join(dir, "manifest.json"), JSON.stringify(run.manifest));
+  await assert.rejects(loadRun(dir), /expected 2 results, got 1/);
+});
+
+test("a results file with two results for one case, or one for an unknown case, is refused", async () => {
+  const dataset = parseDataset(schemas, "dev", text);
+  const run = runFor(dataset);
+  const dir = await writeRun(await mkdtemp(join(tmpdir(), "aql-")), run, dataset);
+  const line = (caseId: string) => `${JSON.stringify({ ...run.results[0], caseId })}\n`;
+
+  await writeFile(join(dir, "results.jsonl"), line("a") + line("a"));
+  await assert.rejects(loadRun(dir), /more than one result for a case/);
+  await writeFile(join(dir, "results.jsonl"), line("a") + line("z"));
+  await assert.rejects(loadRun(dir), /a result for "z", which is not in the dataset/);
 });

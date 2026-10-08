@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { z } from "zod";
 import { executeRun, runCase } from "./runner.ts";
-import type { Candidate, Case, Dataset, RunContext, Scenario, Tool } from "./types.ts";
+import { CandidateUnavailable, type Candidate, type Case, type Dataset, type RunContext, type Scenario, type Tool } from "./types.ts";
 
 type In = { n: number };
 type Out = { n: number };
@@ -11,8 +11,10 @@ const outputSchema = z.strictObject({ n: z.number() });
 const c: Case<In, never> = { id: "c1", input: { n: 2 } };
 
 const INSTRUCTIONS = "Answer with a number.";
+const answerFormat = { type: "object" };
 const scenarioWith = (tools?: () => Record<string, Tool>) => ({
   instructions: INSTRUCTIONS,
+  answerFormat,
   outputSchema,
   timeoutMs: 20,
   tools,
@@ -234,6 +236,7 @@ const scenario: Scenario<In, Out, never> = {
   version: "3",
   inputSchema: z.strictObject({ n: z.number() }),
   outputSchema,
+  answerFormat,
   expectedSchema: z.never(),
   instructions: INSTRUCTIONS,
   datasets: {},
@@ -278,7 +281,9 @@ test("a run records what was executed and one result per case, in dataset order"
     environment,
     now: () => times.shift()!,
     clock: ticking(),
-    onCaseDone: (result, done, total) => progress.push(`${done}/${total} ${result.caseId} ${result.status}`),
+    onCaseDone: (result, done, total) => {
+      progress.push(`${done}/${total} ${result.caseId} ${result.status}`);
+    },
   });
 
   assert.deepEqual(run.manifest, {
@@ -287,7 +292,7 @@ test("a run records what was executed and one result per case, in dataset order"
     scenario: { id: "demo", version: "3", instructions: INSTRUCTIONS, tools: [] },
     dataset: { name: "dev", sha256: "b".repeat(64), caseCount: 3 },
     candidate: { id: "echo", version: "1", config: { mode: "echo" }, deterministic: true },
-    settings: { timeoutMs: 20 },
+    settings: { timeoutMs: 20, concurrency: 1 },
     startedAt: "2026-10-04T09:00:00.000Z",
     finishedAt: "2026-10-04T09:00:02.000Z",
     environment,
@@ -315,6 +320,7 @@ type World = { stock: number; lookupFails?: boolean };
 
 const worldScenario = {
   instructions: INSTRUCTIONS,
+  answerFormat,
   outputSchema: z.strictObject({ stock: z.number() }),
   timeoutMs: 20,
   tools: (c: Case<Question, never, World>): Record<string, Tool> => ({
@@ -355,7 +361,7 @@ test("the candidate is given the input and nothing else of the case", async () =
   const [input, ctx, ...rest] = received[0]!;
   assert.deepEqual(input, { item: "kettle" });
   // The instructions belong to the scenario and are the same for every case.
-  assert.deepEqual(Object.keys(ctx as object).sort(), ["instructions", "report", "signal", "tools"]);
+  assert.deepEqual(Object.keys(ctx as object).sort(), ["answerFormat", "instructions", "report", "signal", "tools"]);
   assert.deepEqual(rest, []);
   // It did not look anything up, so the hidden fact appears nowhere in what was recorded.
   assert.equal(JSON.stringify(result).includes("31337"), false);
@@ -407,4 +413,104 @@ test("a scenario that offers different tools from case to case is refused", asyn
     executeRun(shifting, counting, dataset, { environment }),
     /offers different tools for case "c" than for case "a"/,
   );
+});
+
+// --- Several cases at once, and a spending limit --------------------------------
+
+const PRICES = { currency: "USD" as const, asOf: "2026-09-25", perMillionTokens: { m: { input: 1, output: 1 } } };
+
+/** Finishes the cases in reverse order, and reports one model call of a million tokens each: one dollar. */
+function slowestFirst(overrides: Partial<Candidate<In, Out>> = {}) {
+  let running = 0;
+  let mostAtOnce = 0;
+  const paid: Candidate<In, Out> = {
+    id: "paid",
+    version: "1",
+    config: null,
+    deterministic: false,
+    prices: PRICES,
+    async run({ n }, ctx) {
+      running += 1;
+      mostAtOnce = Math.max(mostAtOnce, running);
+      await new Promise((resolve) => setTimeout(resolve, (4 - n) * 4));
+      ctx.report({ type: "model_call", model: "m", usage: { inputTokens: 1_000_000, outputTokens: 0 } });
+      running -= 1;
+      return { kind: "answer", value: { n } };
+    },
+    ...overrides,
+  };
+  return { paid, mostAtOnce: () => mostAtOnce };
+}
+
+test("cases can run at the same time, and the results still come back in dataset order", async () => {
+  const { paid, mostAtOnce } = slowestFirst();
+  const finished: string[] = [];
+  const run = await executeRun(scenario, paid, dataset, {
+    environment,
+    concurrency: 3,
+    onCaseDone: (result) => {
+      finished.push(result.caseId);
+    },
+  });
+  assert.equal(mostAtOnce(), 3);
+  assert.deepEqual(finished, ["c", "b", "a"]);
+  assert.deepEqual(run.results.map((result) => result.caseId), ["a", "b", "c"]);
+  assert.equal(run.manifest.settings.concurrency, 3);
+  assert.deepEqual(run.manifest.prices, PRICES);
+});
+
+test("the manifest is available before the first case, without an end time", async () => {
+  const { paid } = slowestFirst();
+  const order: string[] = [];
+  const run = await executeRun(scenario, paid, dataset, {
+    environment,
+    onStart: (manifest) => {
+      order.push(`start ${manifest.runId === undefined ? "?" : "known"} ${manifest.finishedAt ?? "unfinished"}`);
+    },
+    onCaseDone: (result) => {
+      order.push(result.caseId);
+    },
+  });
+  assert.deepEqual(order, ["start known unfinished", "a", "b", "c"]);
+  assert.notEqual(run.manifest.finishedAt, undefined);
+  assert.equal(run.manifest.stopped, undefined);
+});
+
+test("a run stops starting cases once it has cost more than its limit", async () => {
+  const { paid } = slowestFirst();
+  const run = await executeRun(scenario, paid, dataset, { environment, maxCost: 1.5 });
+  // One dollar per case: after the second case the limit of 1.50 is passed, so the third never starts.
+  assert.deepEqual(run.results.map((result) => result.caseId), ["a", "b"]);
+  assert.deepEqual(run.manifest.stopped, {
+    reason: "the spending limit of 1.50 USD was passed after 2 of 3 cases",
+  });
+});
+
+test("a limit that is not reached changes nothing", async () => {
+  const { paid } = slowestFirst();
+  const run = await executeRun(scenario, paid, dataset, { environment, maxCost: 5 });
+  assert.equal(run.results.length, 3);
+  assert.equal(run.manifest.stopped, undefined);
+});
+
+test("under a spending limit, a model call that cannot be priced stops the run", async () => {
+  const { paid } = slowestFirst({ prices: { ...PRICES, perMillionTokens: {} } });
+  const run = await executeRun(scenario, paid, dataset, { environment, maxCost: 5 });
+  assert.deepEqual(run.results.map((result) => result.caseId), ["a"]);
+  assert.deepEqual(run.manifest.stopped, {
+    reason: "a model call could not be priced, so the spending limit of 5.00 USD cannot be enforced",
+  });
+});
+
+test("a candidate that cannot run at all stops the run, and no case is blamed for it", async () => {
+  const { paid } = slowestFirst({
+    run: async () => {
+      throw new CandidateUnavailable("no credentials are set up");
+    },
+  });
+  const run = await executeRun(scenario, paid, dataset, { environment, concurrency: 2 });
+  assert.deepEqual(run.results, []);
+  assert.deepEqual(run.manifest.stopped, { reason: "the candidate could not run: no credentials are set up" });
+
+  await assert.rejects(runCase(scenarioWith(), paid, c), CandidateUnavailable);
 });

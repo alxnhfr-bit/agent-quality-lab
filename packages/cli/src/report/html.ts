@@ -23,7 +23,7 @@ import {
   type TraceEvent,
   type Verdict,
 } from "@agent-quality-lab/core";
-import { differsInResult, ms, share } from "../render.ts";
+import { differsInResult, ms, share, unpriced, usd } from "../render.ts";
 
 export interface HtmlReport {
   comparison: Comparison;
@@ -155,7 +155,10 @@ function summarySection(comparison: Comparison): Markup {
       ${row("Median duration", (s) => (s.durationMs ? ms(s.durationMs.median) : "–"))}
       ${row("Max duration", (s) => (s.durationMs ? ms(s.durationMs.max) : "–"))}
       ${row("Tool calls", (s) => `${s.toolCalls.total} (${s.toolCalls.failed} failed)`)}
+      ${sides.some(([, s]) => s.modelCalls > 0) && row("Model calls", (s) => String(s.modelCalls))}
       ${row("Tokens", (s) => (s.tokens ? `${s.tokens.input} in, ${s.tokens.output} out` : "none reported"))}
+      ${sides.some(([, s]) => s.cost) && row("Cost", (s) => (s.cost ? `${usd(s.cost.total)}${unpriced(s)}` : "–"))}
+      ${sides.some(([, s]) => s.cost) && row("Cost per case (median)", (s) => (s.cost ? usd(s.cost.medianPerCase) : "–"))}
     </tbody>
   </table></div>
 </section>

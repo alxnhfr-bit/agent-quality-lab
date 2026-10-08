@@ -4,7 +4,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
@@ -36,6 +36,8 @@ export interface StoredRun {
   results: CaseResult[];
   /** null when the run has not been evaluated. */
   evaluations: EvaluationRecord[] | null;
+  /** False for a run that was interrupted or stopped before every case had run. */
+  complete: boolean;
 }
 
 // --- Datasets ----------------------------------------------------------------
@@ -87,9 +89,54 @@ export function parseDataset<I, E, S>(
 
 // --- Runs --------------------------------------------------------------------
 
+export interface RunWriter {
+  dir: string;
+  /** Adds one result. It is on disk when this returns. */
+  append(result: CaseResult): Promise<void>;
+  /** Replaces the manifest written at the start with the final one. */
+  finish(manifest: Manifest): Promise<void>;
+}
+
 /**
- * Writes a run to `<runsDir>/<runId>/` and returns that directory. Every record
- * is validated first, and an existing run is never overwritten.
+ * Starts a run on disk at `<runsDir>/<runId>/`, so that each result can be
+ * saved as it arrives and an interrupted run keeps what it had. An existing run
+ * is never overwritten.
+ */
+export async function openRun(
+  runsDir: string,
+  manifest: Manifest,
+  dataset: Pick<Dataset<unknown, unknown>, "text">,
+): Promise<RunWriter> {
+  const started = manifestSchema.parse(manifest);
+  if (sha256(dataset.text) !== started.dataset.sha256) {
+    throw new Error("the dataset does not match the hash recorded in the manifest");
+  }
+
+  const dir = join(runsDir, started.runId);
+  await mkdir(runsDir, { recursive: true });
+  try {
+    await mkdir(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(`run "${started.runId}" already exists in ${runsDir}`);
+    }
+    throw error;
+  }
+
+  const writeManifest = (m: Manifest) => writeFile(join(dir, "manifest.json"), `${JSON.stringify(m, null, 2)}\n`);
+  await writeManifest(started);
+  await writeFile(join(dir, "dataset.jsonl"), dataset.text);
+  await writeFile(join(dir, "results.jsonl"), "");
+  return {
+    dir,
+    append: (result) => appendFile(join(dir, "results.jsonl"), toJsonl([caseResultSchema.parse(result)])),
+    finish: (final) => writeManifest(manifestSchema.parse(final)),
+  };
+}
+
+/**
+ * Writes a finished run in one go and returns its directory. Every record is
+ * validated before anything is written.
  */
 export async function writeRun(
   runsDir: string,
@@ -98,23 +145,12 @@ export async function writeRun(
 ): Promise<string> {
   const manifest = manifestSchema.parse(run.manifest);
   const results = run.results.map((result) => caseResultSchema.parse(result));
-  checkAgainstManifest(manifest, dataset.text, results);
+  checkCount(manifest, results);
 
-  const dir = join(runsDir, manifest.runId);
-  await mkdir(runsDir, { recursive: true });
-  try {
-    await mkdir(dir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error(`run "${manifest.runId}" already exists in ${runsDir}`);
-    }
-    throw error;
-  }
-
-  await writeFile(join(dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeFile(join(dir, "dataset.jsonl"), dataset.text);
-  await writeFile(join(dir, "results.jsonl"), toJsonl(results));
-  return dir;
+  const writer = await openRun(runsDir, manifest, dataset);
+  for (const result of results) await writer.append(result);
+  await writer.finish(manifest);
+  return writer.dir;
 }
 
 /** Replaces the run's evaluations. They can always be recomputed from the results. */
@@ -123,7 +159,10 @@ export async function writeEvaluations(dir: string, evaluations: EvaluationRecor
   await writeFile(join(dir, "evaluations.jsonl"), toJsonl(records));
 }
 
-/** Reads a run back, refusing one whose files no longer agree with its manifest. */
+/**
+ * Reads a run back, refusing one whose files no longer agree with its manifest.
+ * A run that was interrupted or stopped loads too, marked as not complete.
+ */
 export async function loadRun(dir: string): Promise<StoredRun> {
   const manifestText = await readIfPresent(join(dir, "manifest.json"));
   if (manifestText === null) throw new Error(`no run found at ${dir}`);
@@ -132,28 +171,52 @@ export async function loadRun(dir: string): Promise<StoredRun> {
   const manifest = parsed.data;
 
   const datasetText = await readFile(join(dir, "dataset.jsonl"), "utf8");
+  if (sha256(datasetText) !== manifest.dataset.sha256) {
+    throw new Error("the dataset does not match the hash recorded in the manifest");
+  }
+  const cases = parseJsonl(datasetText, datasetCaseSchema, `${dir}/dataset.jsonl`);
+
+  // Results are saved in the order the cases finished; they are handed back in dataset order.
+  const position = new Map(cases.map((c, index) => [c.id, index]));
   const results = parseJsonl(
     await readFile(join(dir, "results.jsonl"), "utf8"),
     caseResultSchema,
     `${dir}/results.jsonl`,
   );
-  checkAgainstManifest(manifest, datasetText, results);
+  for (const { caseId } of results) {
+    if (!position.has(caseId)) {
+      throw new Error(`${dir}/results.jsonl has a result for "${caseId}", which is not in the dataset`);
+    }
+  }
+  if (new Set(results.map((result) => result.caseId)).size !== results.length) {
+    throw new Error(`${dir}/results.jsonl has more than one result for a case`);
+  }
+  results.sort((a, b) => position.get(a.caseId)! - position.get(b.caseId)!);
+  checkCount(manifest, results);
 
   const evaluationsText = await readIfPresent(join(dir, "evaluations.jsonl"));
   const evaluations =
     evaluationsText === null
       ? null
       : parseJsonl(evaluationsText, evaluationRecordSchema, `${dir}/evaluations.jsonl`);
-  const cases = parseJsonl(datasetText, datasetCaseSchema, `${dir}/dataset.jsonl`);
-  return { dir, manifest, datasetText, cases, results, evaluations };
+  return { dir, manifest, datasetText, cases, results, evaluations, complete: isComplete(manifest, results) };
 }
 
-function checkAgainstManifest(manifest: Manifest, datasetText: string, results: CaseResult[]): void {
-  if (sha256(datasetText) !== manifest.dataset.sha256) {
-    throw new Error("the dataset does not match the hash recorded in the manifest");
-  }
-  if (results.length !== manifest.dataset.caseCount) {
-    throw new Error(`expected ${manifest.dataset.caseCount} results, got ${results.length}`);
+/** A run is complete when it ran to its end and every case has a result. */
+export function isComplete(manifest: Manifest, results: readonly CaseResult[]): boolean {
+  return (
+    manifest.finishedAt !== undefined &&
+    manifest.stopped === undefined &&
+    results.length === manifest.dataset.caseCount
+  );
+}
+
+/** A run that says it ran to its end must have a result for every case. */
+function checkCount(manifest: Manifest, results: readonly CaseResult[]): void {
+  const expected = manifest.dataset.caseCount;
+  const claimsToBeWhole = manifest.finishedAt !== undefined && manifest.stopped === undefined;
+  if (results.length > expected || (claimsToBeWhole && results.length !== expected)) {
+    throw new Error(`expected ${expected} results, got ${results.length}`);
   }
 }
 

@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { loadRun } from "@agent-quality-lab/core/store";
-import { UsageError, compareCommand, evalCommand, runCommand, type Project } from "./commands.ts";
+import { RunStopped, UsageError, compareCommand, evalCommand, runCommand, type Project } from "./commands.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 
@@ -69,7 +69,7 @@ test("compare shows where two stored runs differ, and refuses a run that is not 
 
   const output = await compareCommand(p, { a, b });
   assert.match(output, /\nA  baseline v1    run .*_baseline\nB  mock-agent v1  run .*_mock-agent\n/);
-  assert.match(output, /\ncorrectness pass  12\/12 +6\/12\n/);
+  assert.match(output, /\ncorrectness pass +12\/12 +6\/12\n/);
   assert.match(output, /\n  correctness  passes only in A \(6\)  in-stock, small-exact, small-one-over, unknown-item, flaky-lookup-over, service-down\n/);
   assert.match(output, /\ncases that differ in status or verdicts \(8 of 12\)\n/);
   assert.match(output, /\ntool-failure +3 +3\/3 · 3\/3 +3\/3 · 1\/3 +3\/3 · 0\/3\n/);
@@ -100,6 +100,39 @@ test("compare writes the comparison as an HTML page when asked", async () => {
   assert.equal(page.includes(root), false);
 });
 
+test("a run that passes its spending limit stops, keeps what it has, and is not scored", async () => {
+  const p = await project();
+  // A limit below zero is passed by the first case, whatever that case cost.
+  await assert.rejects(
+    runCommand(p, { scenario: "stock-check", candidate: "baseline", maxCost: -1 }, () => {}),
+    (error: unknown) =>
+      error instanceof RunStopped &&
+      /was stopped: the spending limit of -1\.00 USD was passed after 1 of 12 cases/.test(error.message) &&
+      /1 of 12 cases are saved/.test(error.message),
+  );
+
+  const runId = await onlyRun(p.runsDir);
+  const run = await loadRun(join(p.runsDir, runId));
+  assert.equal(run.complete, false);
+  assert.equal(run.results.length, 1);
+  assert.equal(run.evaluations, null);
+  await assert.rejects(
+    evalCommand(p, { run: runId }),
+    (error: unknown) => error instanceof UsageError && /is incomplete, with 1 of 12 cases: the spending limit/.test(error.message),
+  );
+});
+
+test("running several cases at once gives the same report as running them one by one", async () => {
+  const [one, many] = [await project(), await project()];
+  const report = async (p: Project, concurrency: number) =>
+    (await runCommand(p, { scenario: "travel-cancellation", candidate: "rules", concurrency }, () => {}))
+      .split("\n")
+      // The run id carries the time, and durations vary.
+      .filter((line) => !line.startsWith("run ") && !line.startsWith("duration"));
+  assert.deepEqual(await report(many, 6), await report(one, 1));
+  assert.equal((await loadRun(join(many.runsDir, await onlyRun(many.runsDir)))).manifest.settings.concurrency, 6);
+});
+
 test("mistakes in usage name what is available", async () => {
   const p = await project();
   const run = (args: Parameters<typeof runCommand>[1]) => runCommand(p, args, () => {});
@@ -108,7 +141,8 @@ test("mistakes in usage name what is available", async () => {
   await assert.rejects(run({ scenario: "nope", candidate: "baseline" }), usage(/no scenario "nope" \(available: .*stock-check.*\)/));
   await assert.rejects(
     run({ scenario: "stock-check", candidate: "nope" }),
-    usage(/no candidate "nope" \(available: baseline, mock-agent\)/),
+    // The scenario's own candidates come first, then the ones that work for any scenario.
+    usage(/no candidate "nope" \(available: baseline, mock-agent, haiku, opus, sonnet\)/),
   );
   await assert.rejects(
     run({ scenario: "stock-check", candidate: "baseline", dataset: "held-out" }),

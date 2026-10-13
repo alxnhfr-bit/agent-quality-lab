@@ -52,6 +52,20 @@ function isSetupProblem(error: unknown): boolean {
   );
 }
 
+/** The Claude models the lab offers, with the setting each is run at. */
+export const CLAUDE_MODELS = [
+  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+  { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", effort: "medium" },
+  { id: "claude-opus-5-5", name: "Claude Opus 5.5", effort: "medium" },
+] as const satisfies readonly { id: string; name: string; effort?: AnthropicOptions["effort"] }[];
+
+/** A client for one of the offered models, by its id. */
+export function claude(model: string): ModelClient {
+  const known = CLAUDE_MODELS.find((offered) => offered.id === model);
+  if (!known) throw new Error(`"${model}" is not one of the models on offer`);
+  return anthropic({ model: known.id, ...("effort" in known && { effort: known.effort }) });
+}
+
 const STOP: Record<string, ModelTurn["stop"]> = {
   end_turn: "done",
   stop_sequence: "done",
@@ -96,11 +110,13 @@ export function anthropic(options: AnthropicOptions): ModelClient {
                 model: options.model,
                 max_tokens: maxTokens,
                 system,
-                tools: tools.map((tool) => ({
-                  name: tool.name,
-                  description: tool.description,
-                  input_schema: tool.parameters as Anthropic.Tool.InputSchema,
-                })),
+                ...(tools.length > 0 && {
+                  tools: tools.map((tool) => ({
+                    name: tool.name,
+                    description: tool.description,
+                    input_schema: tool.parameters as Anthropic.Tool.InputSchema,
+                  })),
+                }),
                 messages: [...messages],
                 ...(options.effort && { output_config: { effort: options.effort } }),
               },

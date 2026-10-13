@@ -4,7 +4,53 @@ A small lab for testing and comparing agentic systems. Give the same task to dif
 
 An implementation can be anything that takes the task input and returns a result: a model with a prompt, a tool-using agent, a workflow engine, a plain program. The lab does not care how it works inside and never asks for hidden reasoning.
 
-**Status:** an early version. It ships with two synthetic scenarios, four plain programs as candidates, and a candidate that hands a task to a Claude model. No results from a real model are published here yet. See [Known limitations](#known-limitations).
+There are two ways to use it:
+
+- **In the browser**, without writing code: describe an agent in words, describe what a good answer looks like, and read a scorecard. See [Testing an agent in the browser](#testing-an-agent-in-the-browser).
+- **On the command line**, for tasks written as code: scenarios with their own tools and checks, and a case-by-case comparison of two implementations. See [Running a comparison](#running-a-comparison).
+
+Both run on the same engine and store their results in the same format.
+
+**Status:** an early version. It ships with a first version of the interface, two synthetic scenarios, four plain programs as candidates, and a candidate that hands a task to a Claude model. No results from a real model are published here yet. See [Known limitations](#known-limitations).
+
+## Testing an agent in the browser
+
+The interface is for people who build agents without being engineers and want to know how good their agent is. It runs on your own computer and has three steps:
+
+1. **What are you testing?** An agent here is a set of instructions and a model. Each change to the instructions is saved as a new version, so a result always says which version it tested.
+2. **What should it do?** A test is a list of example questions, each with an optional note about the right answer, and a few plain sentences that describe a good answer, such as "States the fee as an amount". Each sentence is marked as a must-have or a nice-to-have.
+3. **How did it do?** The agent answers every question. A second model, the judge, then reads every answer and decides each sentence with yes or no, giving one sentence of reasoning. The scorecard says how many answers were good, meaning they met every must-have, and shows each answer with the judge's verdicts and reasons.
+
+It requires Node.js 24 or later.
+
+```bash
+npm install
+```
+
+To try it without calling a model or paying anything, start it in demo mode. Answers and verdicts are then placeholders, and every page that shows them says so:
+
+```bash
+npx aql ui --demo
+```
+
+To test an agent for real, put an Anthropic API key in the environment as `ANTHROPIC_API_KEY` and start it without the flag:
+
+```bash
+npx aql ui
+```
+
+A real run calls the agent's model once per question and the judge once per answer, and shows what both cost. It stops if the answers cost more than 5 US dollars.
+
+What the scorecard counts:
+
+- An answer is good when the judge finds every must-have met. Nice-to-haves are shown and do not decide it.
+- A question the agent failed on, for example because the request to the model failed, has no good answer. The scorecard shows why.
+- An answer the judge failed on is counted as neither good nor not good, and is listed separately.
+- A run that cannot reach its model at all stops and says why. It does not produce a scorecard full of failures.
+
+Your agents, tests and results are kept as plain files in `workspace/`, which git ignores, so your instructions stay on your computer unless you publish them yourself. Each result is an ordinary [run](#run-files), plus the test as it was when it ran and what the judge said.
+
+The interface answers only the computer it runs on.
 
 ## The problem
 
@@ -77,11 +123,7 @@ Execution and scoring are separate steps. A stored run can be scored again with 
 
 ## Running a comparison
 
-Requires Node.js 24 or later. There is no build step.
-
-```bash
-npm install
-```
+Requires Node.js 24 or later and `npm install`, as above. There is no build step.
 
 Run both candidates of the example scenario. Each command executes the candidate, writes a run to `runs/` and prints a summary:
 
@@ -218,24 +260,29 @@ It does not support these:
 - That the mock agent's failure rates, or the naive candidate's mistakes, resemble any real system.
 - That the abstractions fit very different agents. Two scenarios have exercised them, both with plain programs as candidates.
 - That an explanation is any good. `travel-cancellation` records the explanation each answer gives and no check judges it.
+- That the judge in the interface is right. It has only been run with stand-ins in place of models, and nobody has compared its verdicts with a person's.
 - Anything about latency or cost. The durations are those of local function calls, and the mock agent's calls are priced at zero.
 
 ## Known limitations
 
 Scope:
 
-- There are two synthetic scenarios. One model provider is supported, Anthropic, and no agent framework. A candidate is a TypeScript module.
+- There are two synthetic scenarios. One model provider is supported, Anthropic, and no agent framework. On the command line, a candidate is a TypeScript module.
+- In the interface, an agent is instructions and a model. It has no tools, an agent that runs somewhere else cannot be connected, and answers produced elsewhere cannot be loaded.
+- In the interface, each question is asked on its own. There are no conversations of several turns.
+- The interface shows one result at a time. Two versions of an agent cannot yet be put side by side there.
 
 Measurement:
 
-- A comparison uses one run per side. There are no repeated trials and no estimate of run-to-run noise, which is why a comparison describes differences and calls none of them a regression.
+- A comparison uses one run per side. There are no repeated trials and no estimate of run-to-run noise, which is why a comparison describes differences and calls none of them a regression. A scorecard in the interface is one run as well: a model does not answer the same way twice, so the same test can give a different count the next time.
 - The lab sees only what goes through its own tools. A candidate's own tool calls, model calls and fallbacks appear only if the candidate reports them. A silent fallback inside an opaque candidate cannot be detected.
 - Model calls and their token counts are reported by the candidate. For the model candidates they are the provider's own figures, passed on.
 - A cost is those token counts at a price list kept in the repository by hand and saved with each run. It is not the provider's bill, and the list can go out of date. A call that cannot be priced is counted as such, not as free.
 - A request the provider fails, for example under a rate limit, is recorded as an error of that case. It counts against the candidate although the candidate did nothing wrong, so such a run is better repeated.
 - Durations are wall-clock time on the machine that ran the lab, summarised as median and maximum.
 - Versions of scenarios, candidates and evaluators are strings their authors declare. The lab records them with the dataset hash and the git commit, but cannot check that a version was changed when behaviour changed.
-- Evaluators are deterministic code. There is no human review and no model-based judging.
+- The scenarios' evaluators are deterministic code. In the interface the judge is a model, and a model can be wrong. Nothing yet measures how often it agrees with a person, and there is no human review.
+- The interface's spending limit covers the agent's answers. Judging is priced and shown, but not limited.
 - An evaluator cannot judge the trace of a case that did not complete.
 
 Engineering:
@@ -272,14 +319,15 @@ A case can carry a `setup`: the facts of that one case, such as what a lookup re
 
 ```text
 packages/core    run format, runner, evaluation, summaries, cost and comparison. No dependency on the CLI
-packages/cli     the aql command and the text and HTML rendering
-packages/models  a candidate that hands a task to a model, and the one file that talks to a model provider
+packages/cli     the aql command, the text and HTML rendering, and the interface in the browser
+packages/models  candidates that hand a task to a model, the judge, and the one file that talks to a model provider
 scenarios        scenarios with their datasets and candidates
 candidates       candidates that work for any scenario
 runs             written by aql run; ignored by git
+workspace        your agents, tests and results from the interface; ignored by git
 ```
 
-Core returns plain data and the CLI only formats it, so another interface can read the same run files and call the same functions.
+Core returns plain data and the CLI only formats it. The interface in the browser reads the same run files and calls the same functions as the command line.
 
 ## Development
 

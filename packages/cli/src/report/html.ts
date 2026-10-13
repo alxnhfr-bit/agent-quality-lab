@@ -6,7 +6,6 @@
  * Everything a candidate produced is untrusted text. The `html` tag below
  * escapes every interpolated value, so markup can only come from this file.
  */
-import { readFileSync } from "node:fs";
 import {
   passRate,
   type CaseComparison,
@@ -24,6 +23,7 @@ import {
   type Verdict,
 } from "@agent-quality-lab/core";
 import { differsInResult, ms, share, unpriced, usd } from "../render.ts";
+import { asset, html, type Markup } from "./markup.ts";
 
 export interface HtmlReport {
   comparison: Comparison;
@@ -31,26 +31,6 @@ export interface HtmlReport {
   b: RunData;
 }
 
-/** Markup that is safe to insert as it is. Anything else interpolated into `html` is escaped. */
-class Markup {
-  readonly text: string;
-  constructor(text: string) {
-    this.text = text;
-  }
-}
-
-function html(strings: TemplateStringsArray, ...values: unknown[]): Markup {
-  return new Markup(strings.reduce((out, part, i) => out + insert(values[i - 1]) + part));
-}
-
-function insert(value: unknown): string {
-  if (value instanceof Markup) return value.text;
-  if (Array.isArray(value)) return value.map(insert).join("");
-  if (value === null || value === undefined || value === false) return "";
-  return String(value).replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
-}
-
-const asset = (name: string) => new Markup(readFileSync(new URL(name, import.meta.url), "utf8"));
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 const shorten = (text: string) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
 
@@ -67,7 +47,7 @@ export function renderHtmlReport({ comparison, a, b }: HtmlReport): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${scenario.id}: ${comparison.a.candidate.id} and ${comparison.b.candidate.id}</title>
-<style>${asset("./report.css")}</style>
+<style>${asset(new URL("./report.css", import.meta.url))}</style>
 </head>
 <body>
 <main>
@@ -86,7 +66,7 @@ ${summarySection(comparison)}
 ${tagSection(comparison)}
 ${casesSection(comparison, a, b)}
 </main>
-<script>${asset("./report.js")}</script>
+<script>${asset(new URL("./report.js", import.meta.url))}</script>
 </body>
 </html>`;
   return `<!doctype html>\n${page.text}\n`;

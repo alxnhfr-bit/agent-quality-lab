@@ -1,0 +1,243 @@
+/* Additions to the report's styles for the interface: steps, forms and the scorecard. */
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+nav a[aria-current] {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent-track);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  margin-top: 20px;
+}
+
+.sidebar ul,
+ul.plain {
+  margin: 8px 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.sidebar li {
+  padding: 6px 0;
+}
+
+.sidebar li + li {
+  border-top: 1px solid var(--hairline);
+}
+
+.sidebar a[aria-current] {
+  font-weight: 600;
+}
+
+.detail {
+  display: block;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+label,
+.field-label {
+  display: block;
+  margin: 16px 0 4px;
+  font-weight: 500;
+}
+
+form > label:first-of-type,
+.fields label {
+  margin-top: 0;
+}
+
+input:not([type]),
+select,
+textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--page);
+  color: var(--ink);
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px 16px;
+  margin-bottom: 16px;
+}
+
+.hint {
+  margin: 4px 0 0;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.criterion {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  margin-top: 20px;
+}
+
+button.primary,
+a.button {
+  display: inline-block;
+  padding: 8px 16px;
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--page);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+a.button {
+  background: none;
+  color: var(--ink);
+  border-color: var(--border);
+}
+
+button.primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.error,
+.saved {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--critical);
+  background: var(--wash);
+}
+
+.saved {
+  border-left-color: var(--good);
+}
+
+/* --- Scorecard --------------------------------------------------------------- */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 20px 0 8px;
+}
+
+.metric {
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.figure {
+  margin: 2px 0 0;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.meter.wide {
+  width: 100%;
+  margin: 16px 0 0;
+}
+
+.answers {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.answer > summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.verdicts li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.reason {
+  display: block;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .split {
+    grid-template-columns: 1fr;
+  }
+}

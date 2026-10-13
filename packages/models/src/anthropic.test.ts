@@ -5,7 +5,7 @@ import { CandidateUnavailable } from "@agent-quality-lab/core";
 import haiku from "../../../candidates/haiku.ts";
 import opus from "../../../candidates/opus.ts";
 import sonnet from "../../../candidates/sonnet.ts";
-import { ANTHROPIC_PRICES, anthropic } from "./anthropic.ts";
+import { ANTHROPIC_PRICES, CLAUDE_MODELS, anthropic, claude } from "./anthropic.ts";
 
 // Nothing in this file reaches the network: the SDK client is replaced by one that answers from a script.
 
@@ -63,6 +63,25 @@ test("the effort setting is sent only when one is given", async () => {
 
   assert.deepEqual(requests[0]!.params.output_config, { effort: "medium" });
   assert.equal("output_config" in requests[1]!.params, false);
+});
+
+test("a request without tools leaves the tools out altogether", async () => {
+  const { client, requests } = fake([reply([{ type: "text", text: "Hello." }], "end_turn")]);
+  await anthropic({ model: "claude-haiku-4-5", client }).start({ system: "Be brief.", tools: [], signal }).send({ text: "Hi" });
+  assert.equal("tools" in requests[0]!.params, false);
+});
+
+test("a model on offer is run at its own setting, and any other model is turned down before anything is called", () => {
+  assert.deepEqual(
+    CLAUDE_MODELS.map((model) => [model.id, claude(model.id).settings]),
+    [
+      ["claude-haiku-4-5", { provider: "anthropic", maxTokens: 16000 }],
+      ["claude-sonnet-5-5", { provider: "anthropic", maxTokens: 16000, effort: "medium" }],
+      ["claude-opus-5-5", { provider: "anthropic", maxTokens: 16000, effort: "medium" }],
+    ],
+  );
+  for (const model of CLAUDE_MODELS) assert.ok(ANTHROPIC_PRICES.perMillionTokens[model.id], `${model.id} has a price`);
+  assert.throws(() => claude("some-other-model"), /"some-other-model" is not one of the models on offer/);
 });
 
 test("a reply goes back into the history untouched, and tool results follow in one message", async () => {

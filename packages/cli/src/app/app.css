@@ -161,10 +161,14 @@ a.button {
   text-decoration: none;
 }
 
-a.button {
+a.button,
+button.secondary {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
   background: none;
   color: var(--ink);
-  border-color: var(--border);
+  font-weight: 500;
 }
 
 button.primary:disabled {
@@ -236,8 +240,75 @@ button.primary:disabled {
   font-size: 13px;
 }
 
+/* --- Side by side ------------------------------------------------------------ */
+
+.next {
+  margin: 16px 0 0;
+}
+
+form.compare {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 16px;
+}
+
+form.compare label {
+  margin: 0;
+}
+
+form.compare select {
+  width: auto;
+  max-width: 100%;
+  flex: 0 1 auto;
+}
+
+.to {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.changes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.change {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+/* The words say which way; the mark and its colour repeat it. */
+.change.better::before {
+  content: "↑ ";
+  color: var(--good);
+  font-weight: 700;
+}
+
+.change.worse::before {
+  content: "↓ ";
+  color: var(--critical);
+  font-weight: 700;
+}
+
+.note + .fold {
+  margin-top: 10px;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 20px;
+}
+
 @media (max-width: 720px) {
-  .split {
+  .split,
+  .pair {
     grid-template-columns: 1fr;
   }
 }

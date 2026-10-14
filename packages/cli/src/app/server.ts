@@ -6,7 +6,19 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { CRITERION_ROWS, agentPage, resultsPage, runPage, testPage, type Chrome, type PastRun, type TestForm } from "./pages.ts";
+import { compareResults, differences, inOrder, relatedTo } from "./comparison.ts";
+import {
+  CRITERION_ROWS,
+  agentPage,
+  cannotComparePage,
+  comparePage,
+  resultsPage,
+  runPage,
+  testPage,
+  type Chrome,
+  type PastRun,
+  type TestForm,
+} from "./pages.ts";
 import { Runs, type Models } from "./runs.ts";
 import { scorecardFor } from "./scorecard.ts";
 import { InputError, Workspace, parseQuestions } from "./workspace.ts";
@@ -18,13 +30,15 @@ export interface AppOptions {
   models: Models;
   demo: boolean;
   keyFound: boolean;
+  /** For tests: the clock that runs are dated by. */
+  now?: () => Date;
 }
 
 const LOCAL = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export function createApp(options: AppOptions): Server {
   const workspace = new Workspace(options.workspaceDir);
-  const runs = new Runs({ root: options.root, runsDir: workspace.runsDir, models: options.models });
+  const runs = new Runs({ root: options.root, runsDir: workspace.runsDir, models: options.models, now: options.now });
   const chrome: Chrome = { token: randomBytes(16).toString("hex"), demo: options.demo, keyFound: options.keyFound };
 
   const pastRuns = async (): Promise<PastRun[]> => {
@@ -42,6 +56,12 @@ export function createApp(options: AppOptions): Server {
     }
     return past;
   };
+
+  /** The scorecard of a run that finished, by the run's name; nothing for anything else. */
+  const finished = async (runId: string | null) =>
+    runId !== null && (await runs.state(runId))?.phase === "done"
+      ? scorecardFor(workspace.runsDir, runId).catch(() => undefined)
+      : undefined;
 
   const get = async (url: URL, res: ServerResponse): Promise<void> => {
     const id = url.searchParams.get("id") ?? undefined;
@@ -71,16 +91,34 @@ export function createApp(options: AppOptions): Server {
         res,
         resultsPage(chrome, workspace.agents(), workspace.tests(), await pastRuns(), {
           agent: url.searchParams.get("agent") ?? undefined,
+          version: url.searchParams.get("version") ?? undefined,
           test: url.searchParams.get("test") ?? undefined,
         }),
       );
+    }
+    if (url.pathname === "/compare") {
+      const named = (name: string) => finished(url.searchParams.get(name));
+      // From a scorecard's own form the two arrive unordered, and are put in the usual order first.
+      const [chosen, other] = [await named("run"), await named("with")];
+      if (chosen && other) {
+        const [first, second] = inOrder(chosen, other);
+        return redirect(res, `/compare?a=${first.runId}&b=${second.runId}`);
+      }
+      const [a, b] = [await named("a"), await named("b")];
+      if (!a || !b) return page(res, notFound(), 404);
+      const reasons = differences(a, b);
+      return reasons.length > 0
+        ? page(res, cannotComparePage(chrome, a, b, reasons))
+        : page(res, comparePage(chrome, compareResults(a, b)));
     }
     const run = /^\/runs\/([A-Za-z0-9._-]+)$/.exec(url.pathname)?.[1];
     if (run) {
       const state = await runs.state(run);
       if (!state) return page(res, notFound(), 404);
-      const scorecard = state.phase === "done" ? await scorecardFor(workspace.runsDir, run) : undefined;
-      return page(res, runPage(chrome, run, state, scorecard));
+      if (state.phase !== "done") return page(res, runPage(chrome, run, state));
+      const scorecard = await scorecardFor(workspace.runsDir, run);
+      const others = (await pastRuns()).flatMap((past) => (past.scorecard ? [past.scorecard] : []));
+      return page(res, runPage(chrome, run, state, scorecard, relatedTo(scorecard, others)));
     }
     return page(res, notFound(), 404);
   };

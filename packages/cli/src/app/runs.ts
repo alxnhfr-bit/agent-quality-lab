@@ -37,12 +37,15 @@ export class Runs {
   readonly #runsDir: string;
   readonly #root: string;
   readonly #models: Models;
+  readonly #now: (() => Date) | undefined;
   readonly #states = new Map<string, RunState>();
 
-  constructor(options: { root: string; runsDir: string; models: Models }) {
+  /** `now` is for tests: a run is named after the second it started in. */
+  constructor(options: { root: string; runsDir: string; models: Models; now?: (() => Date) | undefined }) {
     this.#root = options.root;
     this.#runsDir = options.runsDir;
     this.#models = options.models;
+    this.#now = options.now;
   }
 
   /** Starts a run and returns its id as soon as it exists on disk. The run carries on in the background. */
@@ -70,6 +73,7 @@ export class Runs {
 
       executeRun(scenario, candidate, dataset, {
         environment: readEnvironment(this.#root),
+        ...(this.#now && { now: this.#now }),
         concurrency: CONCURRENCY,
         maxCost: MAX_COST,
         onStart: async (manifest) => {

@@ -16,8 +16,8 @@ import { createApp, type AppOptions } from "./server.ts";
 const root = resolve(import.meta.dirname, "../../../..");
 
 interface Script {
-  /** What the agent says to a question. An Error makes that call fail. */
-  answer?: (question: string) => string | Error;
+  /** What the agent says to a question, given its instructions. An Error makes that call fail. */
+  answer?: (question: string, instructions: string) => string | Error;
   /** Which criteria the judge finds met, given everything it was shown. An Error makes that call fail. */
   verdicts?: (shown: string) => Record<string, boolean> | Error;
 }
@@ -27,11 +27,11 @@ function standIn(script: Script = {}): Models {
   const client = (model: string): ModelClient => ({
     model,
     settings: { provider: "test" },
-    start: ({ tools }) => ({
+    start: ({ system, tools }) => ({
       async send(message) {
         const text = "text" in message ? message.text : "";
         if (tools.length === 0) {
-          const answer = script.answer?.(text) ?? `An answer to "${text}"`;
+          const answer = script.answer?.(text, system) ?? `An answer to "${text}"`;
           if (answer instanceof Error) throw answer;
           return { text: answer, toolRequests: [], usage: { inputTokens: 1000, outputTokens: 200 }, stop: "done" };
         }
@@ -71,7 +71,10 @@ const words = (page: string) =>
 
 async function lab(t: TestContext, models: Models, options: Partial<AppOptions> = {}) {
   const dir = options.workspaceDir ?? mkdtempSync(join(tmpdir(), "aql-app-"));
-  const server = createApp({ root, workspaceDir: dir, models, demo: false, keyFound: true, ...options });
+  // A run is named after the second it started in, so each look at the clock is a minute after the last.
+  let minute = 0;
+  const now = () => new Date(Date.UTC(2026, 9, 8, 10, minute++));
+  const server = createApp({ root, workspaceDir: dir, models, demo: false, keyFound: true, now, ...options });
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
   t.after(() => {
     server.closeAllConnections();
@@ -319,4 +322,150 @@ test("a demo run says that it is one, on its scorecard and in the list, also onc
   const real = await lab(t, standIn(), { workspaceDir: demo.dir });
   describes(words(await (await real.get(location)).text()));
   assert.match(words(await (await real.get("/results")).text()), /Cancellation questions \d of 3 \(demo\) /);
+});
+
+// --- Two results side by side ---------------------------------------------------
+
+/** Version 1 leaves the policy out, version 2 names it, and the judge notices. */
+const policyMatters = (): Models =>
+  standIn({
+    answer: (_question, instructions) =>
+      instructions.includes("policy") ? "Under the flexible policy the fee is 300 EUR." : "The fee is 300 EUR.",
+    verdicts: (shown) => ({ c2: shown.includes("Under the flexible policy") }),
+  });
+const withPolicy = { ...agentForm, id: "cancellation-helper", instructions: "State the fee and the policy." };
+
+test("a new version's scorecard leads to the version before, and the two are shown side by side", async (t) => {
+  const { get, submit, run } = await lab(t, policyMatters());
+  await submit("/agent", agentForm);
+  await submit("/test", testForm);
+  const v1 = await run("cancellation-helper:1", "cancellation-questions");
+  assert.equal(words(v1.page).includes("Compare with"), false, "there is nothing to compare a first result with");
+
+  await submit("/agent", withPolicy);
+  const v2 = await run("cancellation-helper:2", "cancellation-questions");
+  const pair = `/compare?a=${v1.runId}&b=${v2.runId}`;
+  assert.match(words(v2.page), /Version 1 had 0 of 3 on this test\. See the two side by side /);
+  assert.ok(v2.page.includes(`<a href="${pair.replace("&", "&amp;")}">See the two side by side</a>`));
+  assert.match(words(v2.page), /Compare with Cancellation helper, version 1 · \S+ \S+ · 0 of 3 Compare /);
+
+  // The scorecard's own form names the two in either order; the lower version goes first.
+  for (const [chosen, other] of [[v2, v1], [v1, v2]]) {
+    const ordered = await get(`/compare?run=${chosen!.runId}&with=${other!.runId}`);
+    assert.deepEqual([ordered.status, ordered.headers.get("location")], [303, pair]);
+  }
+
+  const page = words(await (await get(pair)).text());
+  assert.match(page, /Cancellation questions · 3 questions Cancellation helper version 1 compared with version 2 /);
+  assert.match(page, /Good answers 0 of 3 → 3 of 3 Cost of a run \$0\.0240 → \$0\.0240 /);
+  assert.match(page, /3 got better 0 got worse 0 stayed the same Too small a difference to tell from chance\./);
+  assert.match(page, /Names the policy Must have 0 of 3 3 of 3 /);
+  assert.match(page, /Got worse \(0\) None\. Got better \(3\) Can I cancel for free\? Your note: Yes, until Friday /);
+  assert.match(page, /Version 1 · not good The fee is 300 EUR\. .+? Version 2 · good Under the flexible policy the fee is 300 EUR\. /);
+  assert.match(
+    page,
+    /What was different Version 1 · Claude Haiku 4\.5 Always state the fee\. Version 2 · Claude Haiku 4\.5 State the fee and the policy\./,
+  );
+  assert.equal(page.includes("Not good in both"), false);
+  assert.equal(page.includes("could not be compared"), false);
+
+  const swapped = words(await (await get(`/compare?a=${v2.runId}&b=${v1.runId}`)).text());
+  assert.match(swapped, /Cancellation helper version 2 compared with version 1 /);
+  assert.match(swapped, /Good answers 3 of 3 → 0 of 3 .+ 0 got better 3 got worse 0 stayed the same /);
+});
+
+test("a difference is called more than chance once enough answers moved the same way", async (t) => {
+  const { get, submit, run } = await lab(t, policyMatters());
+  const six = { ...testForm, questions: ["One?", "Two?", "Three?", "Four?", "Five?", "Six?"].join("\n") };
+  await submit("/agent", agentForm);
+  await submit("/test", six);
+  const v1 = await run("cancellation-helper:1", "cancellation-questions");
+  await submit("/agent", withPolicy);
+  const v2 = await run("cancellation-helper:2", "cancellation-questions");
+
+  const page = words(await (await get(`/compare?a=${v1.runId}&b=${v2.runId}`)).text());
+  assert.match(page, /6 got better 0 got worse 0 stayed the same More than chance usually produces\./);
+});
+
+test("the same version run twice is compared as two runs, with nothing said to be different", async (t) => {
+  const { get, submit, run } = await lab(t, policyMatters());
+  await submit("/agent", agentForm);
+  await submit("/test", testForm);
+  const first = await run("cancellation-helper:1", "cancellation-questions");
+  const second = await run("cancellation-helper:1", "cancellation-questions");
+  assert.equal(words(second.page).includes("See the two side by side"), false, "there is no version before version 1");
+
+  const ordered = await get(`/compare?run=${second.runId}&with=${first.runId}`);
+  assert.equal(ordered.headers.get("location"), `/compare?a=${first.runId}&b=${second.runId}`);
+  const page = words(await (await get(ordered.headers.get("location")!)).text());
+  assert.match(page, /Cancellation helper version 1, two runs compared /);
+  assert.match(page, /0 got better 0 got worse 3 stayed the same No answer went from good to not good, or back\./);
+  assert.match(page, /Not good in both \(3\) .+ Earlier run · not good The fee is 300 EUR\. .+ Later run · not good /);
+  assert.match(page, /What was different Nothing: both sides are runs of the same version, /);
+});
+
+test("a result from before the test was edited is not offered, and the scorecard says why and what to do", async (t) => {
+  const { get, submit, run } = await lab(t, policyMatters());
+  await submit("/agent", agentForm);
+  await submit("/test", testForm);
+  const v1 = await run("cancellation-helper:1", "cancellation-questions");
+
+  await submit("/test", { ...testForm, id: "cancellation-questions", questions: `${testForm.questions}\nWho pays the fee?` });
+  await submit("/agent", withPolicy);
+  const v2 = await run("cancellation-helper:2", "cancellation-questions");
+  const again = "/results?agent=cancellation-helper&version=1&test=cancellation-questions";
+
+  const card = words(v2.page);
+  assert.match(
+    card,
+    /Version 1 has a result on this test that cannot be put next to this one\. The test's questions or their notes were changed in between\. To compare the two, run version 1 again on the test as it is now\./,
+  );
+  assert.ok(v2.page.includes(`<a href="${again.replaceAll("&", "&amp;")}">run version 1 again</a>`));
+  assert.equal(card.includes("See the two side by side"), false);
+  assert.equal(card.includes("Compare with"), false);
+  assert.match(await (await get(again)).text(), /<option value="cancellation-helper:1" selected>/);
+
+  const refused = await get(`/compare?a=${v1.runId}&b=${v2.runId}`);
+  assert.equal(refused.status, 200);
+  const page = words(await refused.text());
+  assert.match(page, /These two results cannot be put side by side .+ The test's questions or their notes were changed in between\. /);
+  assert.equal(page.includes("got better"), false);
+
+  // Run again on the test as it is now, version 1 can be compared after all.
+  const rerun = await run("cancellation-helper:1", "cancellation-questions");
+  const offered = words(await (await get(v2.location)).text());
+  assert.match(offered, /Version 1 had 0 of 4 on this test\. See the two side by side /);
+  assert.equal((await get(`/compare?run=${v2.runId}&with=${rerun.runId}`)).status, 303);
+});
+
+test("a demo result is never put next to a real one", async (t) => {
+  const demo = await lab(t, demoModels(), { demo: true });
+  await demo.submit("/agent", agentForm);
+  await demo.submit("/test", testForm);
+  const placeholder = await demo.run("cancellation-helper:1", "cancellation-questions");
+
+  const real = await lab(t, policyMatters(), { workspaceDir: demo.dir, now: () => new Date("2026-10-09T10:00:00Z") });
+  await real.submit("/agent", withPolicy);
+  const measured = await real.run("cancellation-helper:2", "cancellation-questions");
+
+  const card = words(measured.page);
+  assert.equal(card.includes("Compare with"), false);
+  assert.equal(card.includes("Version 1 ha"), false);
+  const refused = words(await (await real.get(`/compare?a=${placeholder.runId}&b=${measured.runId}`)).text());
+  assert.match(refused, /cannot be put side by side .+ One of them is a demo run, in which no model was called\./);
+});
+
+test("only finished results can be compared", async (t) => {
+  const { get, submit, run } = await lab(
+    t,
+    standIn({ answer: () => new CandidateUnavailable("the Anthropic API could not be used: no API key") }),
+  );
+  await submit("/agent", agentForm);
+  await submit("/test", testForm);
+  const stopped = await run("cancellation-helper:1", "cancellation-questions");
+
+  assert.equal((await get(`/compare?a=${stopped.runId}&b=${stopped.runId}`)).status, 404);
+  assert.equal((await get("/compare?a=no-such-run&b=no-such-run")).status, 404);
+  assert.equal((await get("/compare")).status, 404);
+  assert.equal((await get(`/compare?run=${stopped.runId}&with=..%2F..`)).status, 404);
 });

@@ -48,6 +48,17 @@ What the scorecard counts:
 - An answer the judge failed on is counted as neither good nor not good, and is listed separately.
 - A run that cannot reach its model at all stops and says why. It does not produce a scorecard full of failures.
 
+### Did a change help?
+
+Change an agent's instructions, save, and run the same test again. The new scorecard says what the version before scored and leads to the two side by side: the headline figures before and after, each criterion for both, and every question with both answers and both sets of verdicts. The questions whose answer got worse come first, then the ones that got better.
+
+Any two results of the same test can be compared this way, also two different agents, or the same version run twice to see how much a result moves by itself.
+
+- Two results are compared only if they answered the same questions and were judged against the same criteria by the same judge. If the test was edited in between, the lab says what changed and does not compare them; run the older version again on the test as it is now.
+- The page says whether the difference is more than chance. It counts the answers that went from good to not good or back, and asks how often a split at least that one-sided would turn up if both sides were equally good. Below 1 time in 20 it calls the difference more than chance; otherwise it says the difference is too small to tell. A short test rarely gets there: it takes at least six changed answers, all in the same direction.
+- An answer the judge failed on, on either side, is called neither better nor worse.
+- A demo result is never compared with a real one.
+
 Your agents, tests and results are kept as plain files in `workspace/`, which git ignores, so your instructions stay on your computer unless you publish them yourself. Each result is an ordinary [run](#run-files), plus the test as it was when it ran and what the judge said.
 
 The interface answers only the computer it runs on.
@@ -270,11 +281,11 @@ Scope:
 - There are two synthetic scenarios. One model provider is supported, Anthropic, and no agent framework. On the command line, a candidate is a TypeScript module.
 - In the interface, an agent is instructions and a model. It has no tools, an agent that runs somewhere else cannot be connected, and answers produced elsewhere cannot be loaded.
 - In the interface, each question is asked on its own. There are no conversations of several turns.
-- The interface shows one result at a time. Two versions of an agent cannot yet be put side by side there.
+- The interface compares two results at a time. It does not show how an agent did across more than two versions.
 
 Measurement:
 
-- A comparison uses one run per side. There are no repeated trials and no estimate of run-to-run noise, which is why a comparison describes differences and calls none of them a regression. A scorecard in the interface is one run as well: a model does not answer the same way twice, so the same test can give a different count the next time.
+- A comparison uses one run per side. There are no repeated trials and no estimate of run-to-run noise, which is why a comparison describes differences and calls none of them a regression. A scorecard in the interface is one run as well: a model does not answer the same way twice, so the same test can give a different count the next time. The interface's side-by-side view says whether a difference is more than chance, which guards against reading too much into a small one; it is still one run per side, and comparing many versions makes it likelier that one of them clears that bar by luck.
 - The lab sees only what goes through its own tools. A candidate's own tool calls, model calls and fallbacks appear only if the candidate reports them. A silent fallback inside an opaque candidate cannot be detected.
 - Model calls and their token counts are reported by the candidate. For the model candidates they are the provider's own figures, passed on.
 - A cost is those token counts at a price list kept in the repository by hand and saved with each run. It is not the provider's bill, and the list can go out of date. A call that cannot be priced is counted as such, not as free.

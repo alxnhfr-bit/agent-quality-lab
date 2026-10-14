@@ -15,8 +15,13 @@ export interface Scorecard {
   startedAt: string;
   /** `model` is the model that answered, as the run recorded it. */
   agent: { id: string; name: string; version: string; model: string; instructions: string };
-  /** `judgedBy` is the models that read the answers, as the run recorded them; empty when none was read. */
-  test: { id: string; name: string; judgedBy: string[] };
+  /**
+   * `judgeModel` is the judge the test asked for and `judgedBy` the models that read the answers, as the run
+   * recorded them; empty when none was read. `questions` is a fingerprint of the questions and their notes.
+   */
+  test: { id: string; name: string; judgeModel: string; judgedBy: string[]; questions: string };
+  /** What else two results must share to be compared: the time limit per answer and the version of every check. */
+  conditions: string;
   /** The run used stand-ins for the models, so its answers and verdicts mean nothing. */
   demo: boolean;
   total: number;
@@ -115,8 +120,14 @@ export async function scorecardFor(runsDir: string, runId: string): Promise<Scor
     test: {
       id: run.manifest.scenario.id.replace(/^test-/, ""),
       name: test.name,
+      judgeModel: test.judgeModel,
       judgedBy: [...new Set(judged.flatMap(({ judgement }) => (judgement ? [judgement.model] : [])))],
+      questions: run.manifest.dataset.sha256,
     },
+    conditions: [
+      `${run.manifest.settings.timeoutMs} ms`,
+      ...new Set((run.evaluations ?? []).map(({ evaluator }) => `${evaluator.id} ${evaluator.version}`)),
+    ].join(", "),
     demo: config.model === DEMO_MODEL,
     total: cases.length,
     good: cases.filter((c) => c.rating === "good").length,

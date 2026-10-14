@@ -6,6 +6,7 @@
 import { CLAUDE_MODELS } from "@agent-quality-lab/models/anthropic";
 import { usd } from "../render.ts";
 import { asset, html, type Markup } from "../report/markup.ts";
+import { CHANGES, type Change, type Comparison, type Related } from "./comparison.ts";
 import { DEMO_MODEL } from "./demo.ts";
 import { MAX_COST, type RunState } from "./runs.ts";
 import type { Scorecard, ScoredCase } from "./scorecard.ts";
@@ -228,9 +229,12 @@ export function resultsPage(
   agents: { id: string; agent: Agent }[],
   tests: { id: string; test: Test }[],
   past: PastRun[],
-  options: { agent?: string | undefined; test?: string | undefined; error?: string | undefined } = {},
+  options: { agent?: string | undefined; version?: string | undefined; test?: string | undefined; error?: string | undefined } = {},
 ): string {
   const ready = agents.length > 0 && tests.length > 0;
+  // Without a version, the one to test is the agent's latest.
+  const chosen = (id: string, agent: Agent, version: number) =>
+    id === options.agent && String(version) === (options.version ?? String(agent.versions.at(-1)!.version));
   return layout(
     chrome,
     3,
@@ -250,7 +254,7 @@ export function resultsPage(
           .toReversed()
           .map(
             (v) =>
-              html`<option value="${id}:${v.version}" ${id === options.agent && v === agent.versions.at(-1) && html`selected`}>${agent.name}, version ${v.version} (${modelName(v.model)})</option>`,
+              html`<option value="${id}:${v.version}" ${chosen(id, agent, v.version) && html`selected`}>${agent.name}, version ${v.version} (${modelName(v.model)})</option>`,
           ),
       )}</select></div>
       <div><label for="test">Test</label><select id="test" name="test">${tests.map(
@@ -286,7 +290,7 @@ ${
   );
 }
 
-export function runPage(chrome: Chrome, runId: string, state: RunState, scorecard?: Scorecard): string {
+export function runPage(chrome: Chrome, runId: string, state: RunState, scorecard?: Scorecard, related?: Related): string {
   if (state.phase === "answering" || state.phase === "judging") {
     const doing = state.phase === "answering" ? "The agent is answering" : "The judge is reading the answers";
     return layout(
@@ -316,17 +320,37 @@ export function runPage(chrome: Chrome, runId: string, state: RunState, scorecar
 </section>`,
     );
   }
-  return layout(chrome, 3, "Scorecard", scorecardBody(scorecard));
+  return layout(chrome, 3, "Scorecard", scorecardBody(scorecard, related ?? { comparable: [] }));
 }
 
-function scorecardBody(card: Scorecard): Markup {
+const total = (card: Scorecard) => (card.agentCost === null || card.judgeCost === null ? null : card.agentCost + card.judgeCost);
+const resultLabel = (card: Scorecard) =>
+  `${card.agent.name}, version ${card.agent.version} · ${day(card.startedAt)} · ${card.good} of ${card.total}`;
+
+/** Where a scorecard leads on to: the version before, and any other result of the same test. */
+function compareWith(card: Scorecard, { comparable, previous, outdated }: Related): Markup {
+  return html`${
+    previous &&
+    html`<p class="next">Version ${previous.agent.version} had ${previous.good} of ${previous.total} on this test. <a href="/compare?a=${previous.runId}&amp;b=${card.runId}">See the two side by side</a></p>`
+  }${
+    outdated &&
+    html`<p class="note">Version ${outdated.card.agent.version} has a result on this test that cannot be put next to this one. ${outdated.reasons.join(" ")} To compare the two, <a href="/results?agent=${card.agent.id}&amp;version=${outdated.card.agent.version}&amp;test=${card.test.id}">run version ${outdated.card.agent.version} again</a> on the test as it is now.</p>`
+  }${
+    comparable.length > 0 &&
+    html`<form class="compare" method="get" action="/compare">
+    <input type="hidden" name="run" value="${card.runId}">
+    <label for="with">Compare with</label>
+    <select id="with" name="with">${comparable.map((other) => html`<option value="${other.runId}">${resultLabel(other)}</option>`)}</select>
+    <button class="secondary">Compare</button>
+  </form>`
+  }`;
+}
+
+function scorecardBody(card: Scorecard, related: Related): Markup {
   const notGood = card.cases.filter((c) => c.rating === "not good");
   const notJudged = card.cases.filter((c) => c.rating === "not judged");
   const good = card.cases.filter((c) => c.rating === "good");
-  const cost =
-    card.agentCost === null || card.judgeCost === null
-      ? "not known"
-      : usd(card.agentCost + card.judgeCost);
+  const cost = total(card) === null ? "not known" : usd(total(card)!);
 
   return html`<section>
   <p class="eyebrow">${card.test.name} · ${day(card.startedAt)}</p>
@@ -346,6 +370,7 @@ function scorecardBody(card: Scorecard): Markup {
   <p class="hint">An answer is good when it meets every must-have. ${
     card.test.judgedBy.length === 0 ? "No answer was read by a judge." : `Judged by ${card.test.judgedBy.map(modelName).join(" and ")}.`
   }</p>
+  ${compareWith(card, related)}
 </section>
 <section>
   <h2>By criterion</h2>
@@ -389,14 +414,163 @@ function answerCard(c: ScoredCase, open: boolean): Markup {
   return html`<details class="card answer" ${open && html`open`}>
     <summary>${c.question}</summary>
     ${c.note && html`<p class="hint">Your note: ${c.note}</p>`}
-    <div class="block"><p class="label">${c.answer === undefined ? "No answer" : "Answer"}</p>${
-      c.answer === undefined ? html`<p>The agent gave no answer: ${c.failure}.</p>` : html`<pre>${c.answer}</pre>`
-    }</div>
+    ${answerAndVerdicts(c, c.answer === undefined ? "No answer" : "Answer")}
+  </details>`;
+}
+
+/** One answer with the judge's verdict on every criterion, under a label that says whose answer it is. */
+function answerAndVerdicts(c: ScoredCase, label: string): Markup {
+  return html`<div class="block"><p class="label">${label}</p>${
+    c.answer === undefined ? html`<p>The agent gave no answer: ${c.failure}.</p>` : html`<pre>${c.answer}</pre>`
+  }</div>
     <ul class="verdicts">${c.verdicts.map(
       (v) =>
         html`<li class="${GLYPH[v.outcome]}"><span>${v.text}${!v.mustHave && html` <span class="detail">(nice to have)</span>`}${
           v.reason && html`<span class="reason">${v.outcome === "not judged" ? "Not judged" : "Judge"}: ${v.reason}</span>`
         }</span></li>`,
-    )}</ul>
-  </details>`;
+    )}</ul>`;
+}
+
+// --- Two results side by side --------------------------------------------------
+
+/** What to call the two sides, as briefly as tells them apart. */
+function sides(a: Scorecard, b: Scorecard): { heading: Markup; a: string; b: string } {
+  if (a.agent.id !== b.agent.id) {
+    const name = (card: Scorecard) => `${card.agent.name}, version ${card.agent.version}`;
+    return { heading: html`${name(a)} <small>compared with ${name(b)}</small>`, a: name(a), b: name(b) };
+  }
+  if (a.agent.version !== b.agent.version) {
+    return {
+      heading: html`${a.agent.name} <small>version ${a.agent.version} compared with version ${b.agent.version}</small>`,
+      a: `Version ${a.agent.version}`,
+      b: `Version ${b.agent.version}`,
+    };
+  }
+  const aFirst = a.startedAt <= b.startedAt;
+  return {
+    heading: html`${a.agent.name} <small>version ${a.agent.version}, two runs compared</small>`,
+    a: aFirst ? "Earlier run" : "Later run",
+    b: aFirst ? "Later run" : "Earlier run",
+  };
+}
+
+const CERTAINTY: Record<Comparison["certainty"], string> = {
+  "no change": "No answer went from good to not good, or back.",
+  "could be chance":
+    "Too small a difference to tell from chance. Each side was run once, and a model does not answer the same way twice.",
+  "more than chance":
+    "More than chance usually produces. If the two were equally good, a split this one-sided would turn up less than 1 time in 20.",
+};
+
+const GROUP: Record<Change, string> = {
+  worse: "Got worse",
+  better: "Got better",
+  "not compared": "Could not be compared",
+  "not good in both": "Not good in both",
+  "good in both": "Good in both",
+};
+
+export function comparePage(chrome: Chrome, comparison: Comparison): string {
+  const { a, b, counts } = comparison;
+  const label = sides(a, b);
+  const pair = (left: unknown, right: unknown) => html`${left} <span class="to">→</span> ${right}`;
+  const cost = (card: Scorecard) => (total(card) === null ? "not known" : usd(total(card)!));
+  const seconds = (card: Scorecard) => (card.medianSeconds === null ? "not known" : `${card.medianSeconds} s`);
+  const same = counts["good in both"] + counts["not good in both"];
+  const sameAgent = a.agent.id === b.agent.id && a.agent.version === b.agent.version;
+
+  return layout(
+    chrome,
+    3,
+    "Side by side",
+    html`<section>
+  <p class="eyebrow">${a.test.name} · ${a.total} questions</p>
+  <h1>${label.heading}</h1>
+  ${a.demo && html`<p class="note">These were demo runs. No model was called, so the answers and verdicts below are placeholders.</p>`}
+  <div class="metrics">
+    <div class="metric"><p class="label">Good answers</p><p class="figure">${pair(`${a.good} of ${a.total}`, `${b.good} of ${b.total}`)}</p>${[
+      [label.a, a] as const,
+      [label.b, b] as const,
+    ].map(([side, card]) => card.notJudged > 0 && html`<p class="hint">${side}: ${card.notJudged} could not be judged</p>`)}</div>
+    <div class="metric"><p class="label">Cost of a run</p><p class="figure">${pair(cost(a), cost(b))}</p></div>
+    <div class="metric"><p class="label">Time per answer</p><p class="figure">${pair(seconds(a), seconds(b))}</p></div>
+  </div>
+  <p class="changes">
+    <span class="change better">${counts.better} got better</span>
+    <span class="change worse">${counts.worse} got worse</span>
+    <span class="change">${same} stayed the same</span>
+    ${counts["not compared"] > 0 && html`<span class="change">${counts["not compared"]} could not be compared</span>`}
+  </p>
+  <p class="note">${CERTAINTY[comparison.certainty]}</p>
+  <details class="fold"><summary>How the lab decides this</summary>
+    <p class="hint">Only the questions whose answer went from good to not good, or back, are counted. If the two sides were equally good, each of those would be as likely to get better as worse. The lab works out how often a split at least this one-sided would turn up by chance, and calls it more than chance when that is less than 1 time in 20. A short test rarely gets there: it takes at least six changed answers, all in the same direction.</p>
+  </details>
+  <p class="hint">${label.a}: <a href="/runs/${a.runId}">scorecard of ${day(a.startedAt)}</a> · ${label.b}: <a href="/runs/${b.runId}">scorecard of ${day(b.startedAt)}</a> · <a href="/compare?a=${b.runId}&amp;b=${a.runId}">Swap sides</a></p>
+</section>
+<section>
+  <h2>By criterion</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th scope="col">A good answer</th><th scope="col"></th><th scope="col">${label.a}</th><th scope="col">${label.b}</th></tr></thead>
+    <tbody>${comparison.criteria.map(
+      (criterion) =>
+        html`<tr><td class="wide">${criterion.text}</td><td>${criterion.mustHave ? "Must have" : "Nice to have"}</td>${[criterion.a, criterion.b].map(
+          ({ met, judged }) =>
+            html`<td><span class="meter"><span style="width:${((met / Math.max(1, judged)) * 100).toFixed(0)}%"></span></span>${met} of ${judged}</td>`,
+        )}</tr>`,
+    )}</tbody>
+  </table></div>
+</section>
+${CHANGES.map((change) => {
+  const questions = comparison.questions.filter((q) => q.change === change);
+  // What got better or worse is always said, also when it is nothing; the other groups only when they hold something.
+  if (questions.length === 0 && change !== "worse" && change !== "better") return false;
+  return html`<section>
+  <h2>${GROUP[change]} (${questions.length})</h2>
+  ${change === "not compared" && html`<p class="sub">The judge failed on one side or both, so these count as neither better nor worse.</p>`}
+  ${questions.length === 0 && html`<p class="empty">None.</p>`}
+  <div class="answers">${questions.map(
+    (q) => html`<details class="card answer" ${(change === "worse" || change === "better" || change === "not compared") && html`open`}>
+    <summary>${q.question}</summary>
+    ${q.note && html`<p class="hint">Your note: ${q.note}</p>`}
+    <div class="pair">
+      <div>${answerAndVerdicts(q.a, `${label.a} · ${q.a.answer === undefined ? "no answer" : q.a.rating}`)}</div>
+      <div>${answerAndVerdicts(q.b, `${label.b} · ${q.b.answer === undefined ? "no answer" : q.b.rating}`)}</div>
+    </div>
+  </details>`,
+  )}</div>
+</section>`;
+})}
+<section>
+  <details class="fold"><summary>What was different</summary>
+    ${
+      sameAgent
+        ? html`<p class="hint">Nothing: both sides are runs of the same version, with the same instructions and the same model. Any difference between them is the kind that chance produces.</p>
+    <div class="block"><p class="label">The instructions</p><pre>${a.agent.instructions}</pre></div>`
+        : html`<div class="pair">${[
+            [label.a, a] as const,
+            [label.b, b] as const,
+          ].map(
+            ([side, card]) =>
+              html`<div class="block"><p class="label">${side} · ${modelName(card.agent.model)}</p><pre>${card.agent.instructions}</pre></div>`,
+          )}</div>`
+    }
+  </details>
+</section>`,
+  );
+}
+
+export function cannotComparePage(chrome: Chrome, a: Scorecard, b: Scorecard, reasons: string[]): string {
+  return layout(
+    chrome,
+    3,
+    "Cannot be compared",
+    html`<section class="card">
+  <h1>These two results cannot be put side by side</h1>
+  <p class="sub">A comparison only means something when both sides answered the same questions and were judged the same way.</p>
+  <ul>${reasons.map((reason) => html`<li>${reason}</li>`)}</ul>
+  <p class="hint">To compare them, run the older one again on the test as it is now.</p>
+  <p><a href="/runs/${a.runId}">${resultLabel(a)}</a></p>
+  <p><a href="/runs/${b.runId}">${resultLabel(b)}</a></p>
+</section>`,
+  );
 }

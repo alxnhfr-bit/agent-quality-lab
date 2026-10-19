@@ -58,6 +58,7 @@ test("every count is the list of cases behind it", () => {
     modelCalls: 2,
     tokens: { input: 15, output: 3 },
     cost: null,
+    labels: [],
     byTag: [],
   });
 });
@@ -95,6 +96,7 @@ test("nothing is invented for what was not measured", () => {
     modelCalls: 0,
     tokens: null,
     cost: null,
+    labels: [],
     byTag: [],
   });
   assert.equal(summarize(results.slice(2), []).tokens, null);

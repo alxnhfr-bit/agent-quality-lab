@@ -3,3 +3,5 @@ runs/
 .DS_Store
 workspace/
 .claude/
+scenarios/reddit-signal/datasets/
+scenarios/reddit-signal/imports/

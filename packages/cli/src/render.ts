@@ -6,6 +6,7 @@ import {
   type CaseSide,
   type Comparison,
   type EvaluationRecord,
+  type LabelBreakdown,
   type Manifest,
   type RunData,
   type RunSummary,
@@ -23,14 +24,16 @@ export interface RunReport {
 export function renderRun({ manifest, results, evaluations, summary, notes = [] }: RunReport): string {
   const { scenario, candidate, dataset } = manifest;
   const lines = [
-    `${scenario.id} v${scenario.version} · ${candidate.id} v${candidate.version} · dataset ${dataset.name} · ${summary.cases} cases`,
+    `${scenario.id} ${versioned(scenario.version)} · ${candidate.id} ${versioned(candidate.version)} · dataset ${dataset.name} · ${summary.cases} cases`,
     `run ${manifest.runId}`,
     "",
   ];
 
-  const allNotes = candidate.deterministic
-    ? notes
-    : [...notes, "this candidate is not deterministic, so this run is one sample of its behaviour"];
+  const allNotes = [
+    ...(manifest.origin ? [imported(manifest.origin)] : []),
+    ...notes,
+    ...(candidate.deterministic ? [] : ["this candidate is not deterministic, so this run is one sample of its behaviour"]),
+  ];
   if (allNotes.length > 0) lines.push(...allNotes.map((note) => `note: ${note}`), "");
 
   const { completed, malformed_output, error, timeout } = summary.byStatus;
@@ -44,7 +47,10 @@ export function renderRun({ manifest, results, evaluations, summary, notes = [] 
   if (summary.durationMs) {
     facts.push(["duration", `median ${ms(summary.durationMs.median)}, max ${ms(summary.durationMs.max)}`]);
   }
-  facts.push(["tool calls", `${summary.toolCalls.total}, of which ${summary.toolCalls.failed} failed`]);
+  facts.push([
+    "tool calls",
+    untraced({ manifest, results }) ? "not imported" : `${summary.toolCalls.total}, of which ${summary.toolCalls.failed} failed`,
+  ]);
   if (summary.modelCalls > 0) facts.push(["model calls", String(summary.modelCalls)]);
   if (summary.tokens) {
     facts.push(["tokens", `${summary.tokens.input} in, ${summary.tokens.output} out`]);
@@ -91,6 +97,8 @@ export function renderRun({ manifest, results, evaluations, summary, notes = [] 
     );
   }
 
+  for (const breakdown of summary.labels) lines.push("", ...renderLabels(breakdown));
+
   const notCompleted = results.filter((result) => result.status !== "completed").map(describeFailure);
   if (notCompleted.length > 0) lines.push("", "not completed", ...indent(table(notCompleted)));
 
@@ -110,11 +118,14 @@ export function renderComparison(comparison: Comparison, a: RunData, b: RunData)
   const { scenario, dataset, cases } = comparison;
   const runs = [comparison.a, comparison.b];
   const lines = [
-    `${scenario.id} v${scenario.version} · dataset ${dataset.name} · ${cases.length} cases`,
+    `${scenario.id} ${versioned(scenario.version)} · dataset ${dataset.name} · ${cases.length} cases`,
     "",
-    ...table(runs.map((run, i) => ["AB"[i]!, `${run.candidate.id} v${run.candidate.version}`, `run ${run.runId}`])),
+    ...table(runs.map((run, i) => ["AB"[i]!, `${run.candidate.id} ${versioned(run.candidate.version)}`, `run ${run.runId}`])),
     "",
   ];
+  const origins = [a, b].flatMap((run, i) => (run.manifest.origin ? [`${"AB"[i]}: ${imported(run.manifest.origin)}`] : []));
+  if (origins.length > 0) lines.push(...origins.map((origin) => `note: ${origin}`), "");
+  const traced = [a, b].map((run) => !untraced(run));
 
   const sampled = [...new Set(runs.filter((run) => !run.candidate.deterministic).map((run) => run.candidate.id))];
   if (sampled.length > 0) {
@@ -137,7 +148,7 @@ export function renderComparison(comparison: Comparison, a: RunData, b: RunData)
     ),
     row("median duration", (s) => (s.durationMs ? ms(s.durationMs.median) : "-")),
     row("max duration", (s) => (s.durationMs ? ms(s.durationMs.max) : "-")),
-    row("tool calls", (s) => `${s.toolCalls.total} (${s.toolCalls.failed} failed)`),
+    ["tool calls", ...runs.map((run, i) => (traced[i] ? `${run.summary.toolCalls.total} (${run.summary.toolCalls.failed} failed)` : "not imported"))],
   ];
   if (runs.some((run) => run.summary.modelCalls > 0)) rows.push(row("model calls", (s) => String(s.modelCalls)));
   if (runs.some((run) => run.summary.tokens)) {
@@ -199,8 +210,8 @@ export function renderComparison(comparison: Comparison, a: RunData, b: RunData)
     lines.push("", "no case differs in status or verdicts");
   } else {
     const sides = differing.flatMap((c) => [
-      [c.caseId, "A", describeSide(resultsA!.get(c.caseId)!, c.a)],
-      ["", "B", describeSide(resultsB!.get(c.caseId)!, c.b)],
+      [c.caseId, "A", describeSide(resultsA!.get(c.caseId)!, c.a, traced[0]!)],
+      ["", "B", describeSide(resultsB!.get(c.caseId)!, c.b, traced[1]!)],
     ]);
     lines.push(
       "",
@@ -219,6 +230,51 @@ export function renderComparison(comparison: Comparison, a: RunData, b: RunData)
 }
 
 /** A pass count out of the cases the evaluator applies to. */
+/** Says what the lab did and did not see of answers it imported. */
+export function imported(origin: NonNullable<Manifest["origin"]>): string {
+  return `these answers were imported from ${origin.source}, not run by the lab: it measured no durations, and knows only what was imported with them`;
+}
+
+/** An imported run that came without any trace: its tool and model calls are unknown, not zero. */
+export function untraced(run: Pick<RunData, "manifest" | "results">): boolean {
+  return run.manifest.origin !== undefined && run.results.every((result) => result.trace.length === 0);
+}
+
+/** "v1" for a numbered version, the name itself for a named one. */
+export function versioned(version: string): string {
+  return /^\d/.test(version) ? `v${version}` : version;
+}
+
+/** Which labels were given for which, so that the shape of the mistakes shows and not only their number. */
+export function renderLabels(breakdown: LabelBreakdown): string[] {
+  const of = (part: string[], whole: string[], ratio: number | null) =>
+    ratio === null ? "n/a" : `${part.length}/${whole.length} (${Math.round(ratio * 100)}%)`;
+  const lines = [
+    `labels given by ${breakdown.evaluator.id}, over the ${breakdown.cases} cases it sorted`,
+    ...indent(
+      table([
+        ["label", "should have", "given", "right", "precision", "recall"],
+        ...breakdown.labels.map((l) => [
+          l.label,
+          String(l.expected.length),
+          String(l.given.length),
+          String(l.right.length),
+          of(l.right, l.given, l.precision),
+          of(l.right, l.expected, l.recall),
+        ]),
+      ]),
+    ),
+  ];
+  if (breakdown.mistakes.length > 0) {
+    lines.push(
+      "",
+      "mistaken for (the label it should have had → the label it was given)",
+      ...indent(table(breakdown.mistakes.map((m) => [`${m.expected} → ${m.actual}`, String(m.caseIds.length)]))),
+    );
+  }
+  return lines;
+}
+
 export function share({ pass, of }: { pass: number; of: number }): string {
   return of === 0 ? "n/a" : `${pass}/${of}`;
 }
@@ -227,12 +283,11 @@ export function differsInResult(c: CaseComparison): boolean {
   return c.differences.includes("status") || c.differences.includes("verdicts");
 }
 
-function describeSide(result: CaseResult, side: CaseSide): string {
+function describeSide(result: CaseResult, side: CaseSide, traced: boolean): string {
   if (result.status !== "completed") return describeFailure(result)[1]!;
-  const parts = [
-    result.output.kind === "answer" ? `answer ${shorten(JSON.stringify(result.output.value))}` : "abstain",
-    `${side.toolCalls} tool call${side.toolCalls === 1 ? "" : "s"}`,
-  ];
+  const parts = [result.output.kind === "answer" ? `answer ${shorten(JSON.stringify(result.output.value))}` : "abstain"];
+  // An imported answer that came without its trace has an unknown number of tool calls, not zero.
+  if (traced) parts.push(`${side.toolCalls} tool call${side.toolCalls === 1 ? "" : "s"}`);
   if (side.fallback) parts.push("fallback");
   const withOutcome = (outcome: string) =>
     Object.entries(side.verdicts)

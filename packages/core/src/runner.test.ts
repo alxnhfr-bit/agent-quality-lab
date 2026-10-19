@@ -455,7 +455,7 @@ test("cases can run at the same time, and the results still come back in dataset
   assert.equal(mostAtOnce(), 3);
   assert.deepEqual(finished, ["c", "b", "a"]);
   assert.deepEqual(run.results.map((result) => result.caseId), ["a", "b", "c"]);
-  assert.equal(run.manifest.settings.concurrency, 3);
+  assert.equal(run.manifest.settings?.concurrency, 3);
   assert.deepEqual(run.manifest.prices, PRICES);
 });
 

@@ -2,14 +2,16 @@
  * What each command does, apart from parsing arguments and printing. Every
  * number shown comes from core; this file only wires core functions together.
  */
-import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   comparability,
   compare,
   evaluateRun,
   executeRun,
+  importRun,
   summarize,
   type Candidate,
   type Scenario,
@@ -22,8 +24,10 @@ import {
   readEnvironment,
   stackRelativeTo,
   writeEvaluations,
+  writeRun,
   type RunWriter,
 } from "@agent-quality-lab/core/store";
+import { z } from "zod";
 import { renderComparison, renderRun } from "./render.ts";
 import { renderHtmlReport } from "./report/html.ts";
 
@@ -64,7 +68,7 @@ export async function runCommand(
 ): Promise<string> {
   const scenario = await loadScenario(project.root, args.scenario);
   const candidate = await loadCandidate(project.root, args.scenario, args.candidate);
-  const dataset = await loadDataset(scenario, datasetName(scenario, args.dataset));
+  const dataset = await openDataset(project.root, scenario, datasetName(scenario, args.dataset));
 
   // Each result goes to disk as it arrives, so a run that is interrupted keeps what it had.
   let writer: RunWriter | undefined;
@@ -104,6 +108,45 @@ export async function runCommand(
     results: run.results,
     evaluations,
     summary: summarize(run.results, evaluations, dataset.cases, run.manifest.prices),
+  });
+}
+
+/**
+ * Loads answers that were produced outside the lab as a run of a scenario,
+ * and scores them. Nothing is executed.
+ */
+export async function importCommand(
+  project: Project,
+  args: { scenario: string; answers: string; dataset?: string | undefined },
+): Promise<string> {
+  const scenario = await loadScenario(project.root, args.scenario);
+  const dataset = await openDataset(project.root, scenario, datasetName(scenario, args.dataset));
+  const path = resolve(args.answers);
+  if (!existsSync(path)) throw new UsageError(`no answers file at ${args.answers}`);
+  const text = readFileSync(path, "utf8");
+
+  let run;
+  try {
+    // Named relative to the project, or by its file name when it lies outside: a run does not record where this computer keeps things.
+    const within = relative(project.root, path);
+    run = importRun(scenario, dataset, JSON.parse(text), {
+      source: within.startsWith("..") || isAbsolute(within) ? basename(path) : within,
+      sha256: createHash("sha256").update(text).digest("hex"),
+      environment: readEnvironment(project.root),
+    });
+  } catch (error) {
+    const reason = error instanceof z.ZodError ? z.prettifyError(error) : (error as Error).message;
+    throw new UsageError(`${args.answers} cannot be imported: ${reason}`);
+  }
+  const dir = await writeRun(project.runsDir, run, dataset);
+  const evaluations = await evaluateRun(scenario, dataset.cases, run.results);
+  await writeEvaluations(dir, evaluations);
+
+  return renderRun({
+    manifest: run.manifest,
+    results: run.results,
+    evaluations,
+    summary: summarize(run.results, evaluations, dataset.cases),
   });
 }
 
@@ -175,6 +218,18 @@ function datasetName(scenario: AnyScenario, requested: string | undefined): stri
     );
   }
   return requested;
+}
+
+/** A dataset can live outside git, for example when its cases are not the lab's to publish. */
+async function openDataset(root: string, scenario: AnyScenario, name: string) {
+  const location = scenario.datasets[name]!;
+  if (!existsSync(location)) {
+    throw new UsageError(
+      `dataset "${name}" of scenario "${scenario.id}" has no file at ${relative(root, fileURLToPath(location))}; ` +
+        `see scenarios/${scenario.id}/README.md for how to create it`,
+    );
+  }
+  return loadDataset(scenario, name);
 }
 
 async function loadScenario(root: string, name: string): Promise<AnyScenario> {

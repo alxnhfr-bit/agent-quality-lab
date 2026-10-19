@@ -105,8 +105,8 @@ export const candidateOutputSchema = z.discriminatedUnion("kind", [
 
 /** Fields every result ends with. Records are written in schema order, so a line reads: case, how it ended, evidence. */
 const observed = {
-  /** Wall-clock time of the candidate call, measured by the lab. */
-  durationMs: z.number().nonnegative(),
+  /** Wall-clock time of the candidate call, measured by the lab. Absent for an answer the lab imported, not ran. */
+  durationMs: z.number().nonnegative().optional(),
   trace: z.array(traceEventSchema),
 };
 
@@ -150,6 +150,12 @@ const decided = z.strictObject({
   outcome: z.enum(["pass", "fail"]),
   /** A number behind the judgment, e.g. a count of unnecessary tool calls. */
   value: z.number().optional(),
+  /**
+   * For a check that sorts cases into labels: the label the case should have
+   * had, and the one it was given. From these the lab works out which labels
+   * are mistaken for which.
+   */
+  label: z.strictObject({ expected: z.string().min(1), actual: z.string().min(1) }).optional(),
   detail: z.string().optional(),
 });
 const undecided = z.strictObject({
@@ -216,11 +222,27 @@ export const manifestSchema = z.strictObject({
     /** Declared by the candidate. When false, a single run is one sample, not the answer. */
     deterministic: z.boolean(),
   }),
-  settings: z.strictObject({
-    timeoutMs: z.number().positive(),
-    /** How many cases ran at the same time. Absent in runs made before this was recorded. */
-    concurrency: z.number().int().positive().optional(),
-  }),
+  /** How the lab ran the cases. Absent for an imported run, which the lab did not run. */
+  settings: z
+    .strictObject({
+      timeoutMs: z.number().positive(),
+      /** How many cases ran at the same time. Absent in runs made before this was recorded. */
+      concurrency: z.number().int().positive().optional(),
+    })
+    .optional(),
+  /**
+   * Present when the answers were produced outside the lab and loaded into it.
+   * The lab watched nothing being made: it told the candidate nothing, measured
+   * no durations, and has only the evidence the source recorded.
+   */
+  origin: z
+    .strictObject({
+      kind: z.literal("imported"),
+      /** The file the answers were loaded from, as named when they were imported. */
+      source: z.string().min(1),
+      sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    })
+    .optional(),
   prices: pricesSchema.optional(),
   startedAt: z.iso.datetime(),
   /** Absent while a run is under way, and for good if it was interrupted. */

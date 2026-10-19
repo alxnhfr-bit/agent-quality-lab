@@ -125,7 +125,7 @@ export async function scorecardFor(runsDir: string, runId: string): Promise<Scor
       questions: run.manifest.dataset.sha256,
     },
     conditions: [
-      `${run.manifest.settings.timeoutMs} ms`,
+      `${run.manifest.settings?.timeoutMs ?? "no"} ms`,
       ...new Set((run.evaluations ?? []).map(({ evaluator }) => `${evaluator.id} ${evaluator.version}`)),
     ].join(", "),
     demo: config.model === DEMO_MODEL,

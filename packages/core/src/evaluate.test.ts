@@ -35,7 +35,7 @@ const doubles: Evaluator<In, Out, Out> = {
 const quick: Evaluator<In, Out, Out> = {
   id: "quick",
   version: "2",
-  evaluate: async (_c, { durationMs }) => ({ outcome: durationMs < 10 ? "pass" : "fail", value: durationMs }),
+  evaluate: async (_c, { durationMs = Infinity }) => ({ outcome: durationMs < 10 ? "pass" : "fail", value: durationMs }),
 };
 
 test("there is one record per case and evaluator, and only completed cases are judged", async () => {

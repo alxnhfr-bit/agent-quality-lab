@@ -244,19 +244,31 @@ async function runWithTools<I, O, E, S>(
     return { ...base, status: "error", error: describeError(settled.error, options.cleanStack) };
   }
 
+  return resultOf(scenario.outputSchema, base, settled.value);
+}
+
+/**
+ * What a candidate handed back, as a completed case or as malformed output.
+ * Shared by the runner and by imports, so an answer counts the same wherever it was made.
+ */
+export function resultOf(
+  outputSchema: Scenario<unknown, unknown, unknown>["outputSchema"],
+  base: Pick<CaseResult, "caseId" | "trace" | "durationMs">,
+  returned: unknown,
+): CaseResult {
   const malformed = (problem: string): CaseResult => {
-    const raw = jsonSchema.safeParse(settled.value);
+    const raw = jsonSchema.safeParse(returned);
     return raw.success
       ? { ...base, status: "malformed_output", problem, rawOutput: raw.data }
       : { ...base, status: "malformed_output", problem: `${problem} (the returned value cannot be stored as JSON)` };
   };
 
-  const output = candidateOutputSchema.safeParse(settled.value);
+  const output = candidateOutputSchema.safeParse(returned);
   if (!output.success) {
     return malformed('expected { kind: "answer", value } or { kind: "abstain", reason }');
   }
   if (output.data.kind === "answer") {
-    const answer = scenario.outputSchema.safeParse(output.data.value);
+    const answer = outputSchema.safeParse(output.data.value);
     if (!answer.success) {
       return malformed(`answer does not match the scenario's output schema: ${answer.error.message}`);
     }
@@ -322,7 +334,7 @@ function roundMs(ms: number): number {
   return Math.round(ms * 1000) / 1000;
 }
 
-function runIdFor(startedAt: Date, scenarioId: string, candidateId: string): string {
+export function runIdFor(startedAt: Date, scenarioId: string, candidateId: string): string {
   const stamp = `${startedAt.toISOString().slice(0, 19).replaceAll(":", "-")}Z`;
   return `${stamp}_${scenarioId}_${candidateId}`;
 }

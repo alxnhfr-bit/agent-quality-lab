@@ -103,7 +103,8 @@ export interface Candidate<I, O> {
 export interface CompletedCase<O> {
   output: CandidateOutput<O>;
   trace: readonly TraceEvent[];
-  durationMs: number;
+  /** Absent for an answer the lab imported, not ran. */
+  durationMs?: number;
 }
 
 /** Judges one aspect of a completed case against an expectation. */

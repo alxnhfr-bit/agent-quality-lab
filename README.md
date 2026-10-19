@@ -11,7 +11,7 @@ There are two ways to use it:
 
 Both run on the same engine and store their results in the same format.
 
-**Status:** an early version. It ships with a first version of the interface, two synthetic scenarios, four plain programs as candidates, and a candidate that hands a task to a Claude model. No results from a real model are published here yet. See [Known limitations](#known-limitations).
+**Status:** an early version. It ships with a first version of the interface, two synthetic scenarios, four plain programs as candidates, a candidate that hands a task to a Claude model, and a scenario that re-scores the stored runs of three real systems. See [Known limitations](#known-limitations).
 
 ## Testing an agent in the browser
 
@@ -178,14 +178,31 @@ npx aql run travel-cancellation --candidate haiku --concurrency 4
 
 A run records the prices its cost was worked out from, so the figure can be checked later.
 
+### Importing answers produced elsewhere
+
+A system that already ran somewhere else can be scored without running it again. Its answers go in a JSON file, one per case of the dataset, and `aql import` loads them as a run of the scenario and scores it:
+
+```text
+npx aql import <scenario> <answers-file> --dataset <name>
+```
+
+The file names the system and lists its answers: `{ "candidate": { "id", "version", "config" }, "startedAt", "answers": [ ... ] }`, where each answer is `{ "caseId", "answer" }`, `{ "caseId", "abstain" }` or `{ "caseId", "error" }`. An answer is checked exactly as a candidate's would be, so one that does not fit the scenario is malformed output, not mapped onto something that fits. An import that does not cover every case is refused.
+
+An imported run says where its answers came from. It records no durations, no settings and no instructions, because the lab did not watch the answers being made, and it shows tool calls it was not given as "not imported", not as zero. Two imported runs of the same dataset can be compared like any other two runs.
+
 ## The scenarios
 
 | Scenario | The task | What it stresses |
 |---|---|---|
 | `stock-check` | Can an order for some units of an item be fulfilled? One lookup tool. 12 cases | Every way a case can end, abstaining, a tool that fails, guessing |
 | `travel-cancellation` | What does it cost to cancel this booking? Six lookup tools, four of them needed. 24 cases | Policy rules, time zones, a source that should not be trusted, records that contradict each other, escalating to a human |
+| `reddit-signal` | Which of five labels does a Reddit travel post get? 91 hand-labelled posts, labelled twice | Real systems: the stored runs of three projects, re-scored and broken down by which label was mistaken for which |
 
 In `travel-cancellation` every case has its own small world of made-up records, and its own things that go wrong. It separates two ways of not answering: abstaining when the facts cannot be obtained, and escalating when the records were obtained but contradict each other. An escalation is an ordinary answer that this scenario defines; the lab itself only knows answers and abstentions.
+
+`reddit-signal` holds no posts: they are other people's writing, and are read from the projects on the computer the lab runs on. Its [README](scenarios/reddit-signal/README.md) says how, and shows that the lab arrives at every figure the three projects reported for their stored runs.
+
+For a check that sorts cases into labels, a run's report also shows each label's precision and recall, and which label was mistaken for which. A share of right answers hides the shape of the mistakes: a system that files everything under the most common label can still score well.
 
 ## Example results
 
@@ -264,12 +281,13 @@ The example supports these statements:
 - A second task from a different domain fits without any of its vocabulary in the lab's core.
 - A weakness confined to one kind of case stays visible in the breakdown by tag, where the totals blur it.
 - Every count in a summary or comparison can be traced to the cases behind it.
+- Answers stored by real systems outside the lab can be re-scored by it: for `reddit-signal`, the lab arrives at the figures each of three projects reported for its own runs.
 
 It does not support these:
 
-- Anything about a real model, agent or framework. The model candidates exist, and no result from one is published here.
+- Anything about a real model, agent or framework, beyond the `reddit-signal` runs. Those were made by real systems outside the lab and re-scored here; the lab ran none of them.
 - That the mock agent's failure rates, or the naive candidate's mistakes, resemble any real system.
-- That the abstractions fit very different agents. Two scenarios have exercised them, both with plain programs as candidates.
+- That the abstractions fit very different agents. Three scenarios have exercised them; the only real systems among the candidates ran outside the lab.
 - That an explanation is any good. `travel-cancellation` records the explanation each answer gives and no check judges it.
 - That the judge in the interface is right. It has only been run with stand-ins in place of models, and nobody has compared its verdicts with a person's.
 - Anything about latency or cost. The durations are those of local function calls, and the mock agent's calls are priced at zero.
@@ -295,6 +313,7 @@ Measurement:
 - The scenarios' evaluators are deterministic code. In the interface the judge is a model, and a model can be wrong. Nothing yet measures how often it agrees with a person, and there is no human review.
 - The interface's spending limit covers the agent's answers. Judging is priced and shown, but not limited.
 - An evaluator cannot judge the trace of a case that did not complete.
+- An imported answer comes without its trace, so an evaluator that reads the trace cannot tell it from an answer that made no calls. No scenario that is imported into uses such an evaluator yet.
 
 Engineering:
 

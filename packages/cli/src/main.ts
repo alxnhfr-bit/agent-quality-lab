@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { projectRoot } from "@agent-quality-lab/core/store";
-import { DEFAULT_MAX_COST, RunStopped, UsageError, compareCommand, evalCommand, runCommand } from "./commands.ts";
+import { DEFAULT_MAX_COST, RunStopped, UsageError, compareCommand, evalCommand, importCommand, runCommand } from "./commands.ts";
 
 const USAGE = `Usage:
   aql run <scenario> --candidate <name> [--dataset <name>] [--concurrency <n>] [--max-cost <usd>]
@@ -13,6 +13,11 @@ const USAGE = `Usage:
 
   aql eval <run>
       Score an existing run again with the scenario's current evaluators.
+
+  aql import <scenario> <answers-file> [--dataset <name>]
+      Load answers that were produced outside the lab as a run of the scenario, and score them.
+      The file is JSON: { "candidate": { "id", "version", "config" }, "startedAt"?, "answers": [
+      { "caseId", "answer" } or { "caseId", "abstain" } or { "caseId", "error" } ] }, one entry per case.
 
   aql ui [--port <n>] [--demo] [--no-open] [--workspace <folder>]
       Open the interface in your browser: describe an agent, describe a test, read the scorecard.
@@ -66,6 +71,9 @@ async function main(argv: string[]): Promise<string> {
   }
   if (command === "compare" && target && second && extra.length === 0) {
     return compareCommand(project, { a: target, b: second, html: values.html });
+  }
+  if (command === "import" && target && second && extra.length === 0) {
+    return importCommand(project, { scenario: target, answers: second, dataset: values.dataset });
   }
   if (second !== undefined) throw new UsageError(USAGE);
   if (command === "run" && target && values.candidate && extra.length === 0) {

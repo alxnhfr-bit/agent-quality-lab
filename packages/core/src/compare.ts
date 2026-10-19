@@ -64,7 +64,8 @@ export interface CaseSide {
   verdicts: Record<string, Verdict["outcome"]>;
   toolCalls: number;
   fallback: boolean;
-  durationMs: number;
+  /** Absent for an imported answer. */
+  durationMs?: number;
 }
 
 /**
@@ -106,7 +107,8 @@ export function comparability(a: RunData, b: RunData): string[] {
   if (toldA.tools !== undefined && toldB.tools !== undefined && !jsonEqual(toldA.tools, toldB.tools)) {
     reasons.push("their candidates were offered different tools, or tools described differently");
   }
-  if (ma.settings.timeoutMs !== mb.settings.timeoutMs) {
+  // An imported run has no settings: the lab ran nothing.
+  if (ma.settings && mb.settings && ma.settings.timeoutMs !== mb.settings.timeoutMs) {
     reasons.push(`they ran with different time limits (${ma.settings.timeoutMs} ms and ${mb.settings.timeoutMs} ms)`);
   }
 
@@ -191,7 +193,13 @@ function sides(run: RunData): Map<string, SideDetail> {
   for (const result of run.results) {
     const toolCalls = result.trace.filter((event) => event.type === "tool_call").length;
     const fallback = result.trace.some((event) => event.type === "fallback");
-    const side: CaseSide = { status: result.status, verdicts: {}, toolCalls, fallback, durationMs: result.durationMs };
+    const side: CaseSide = {
+      status: result.status,
+      verdicts: {},
+      toolCalls,
+      fallback,
+      ...(result.durationMs !== undefined && { durationMs: result.durationMs }),
+    };
     details.set(result.caseId, { side, result });
   }
   for (const { caseId, evaluator, verdict } of run.evaluations ?? []) {

@@ -59,10 +59,11 @@ function typed<O>(
   outputSchema: Scenario<unknown, O, unknown>["outputSchema"],
   { output, trace, durationMs }: Completed,
 ): CompletedCase<O> | { problem: string } {
-  if (output.kind === "abstain") return { output, trace, durationMs };
+  const timing = durationMs === undefined ? {} : { durationMs };
+  if (output.kind === "abstain") return { output, trace, ...timing };
   const value = outputSchema.safeParse(output.value);
   return value.success
-    ? { output: { kind: "answer", value: value.data }, trace, durationMs }
+    ? { output: { kind: "answer", value: value.data }, trace, ...timing }
     : { problem: "the stored answer no longer fits the scenario's output schema" };
 }
 

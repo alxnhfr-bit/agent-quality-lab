@@ -4,6 +4,7 @@
  */
 import type { CaseResult, EvaluationRecord, Prices } from "./artifact.ts";
 import { costOf } from "./cost.ts";
+import { labelBreakdowns, type LabelBreakdown } from "./labels.ts";
 
 /** The counts for one set of cases: a whole run, or the cases that carry one tag. */
 export interface SliceSummary {
@@ -13,7 +14,7 @@ export interface SliceSummary {
   /** Cases whose trace contains a fallback. */
   fallbacks: string[];
   evaluators: EvaluatorSummary[];
-  /** null when the run has no cases. */
+  /** null when no case has a duration: the run has no cases, or its answers were imported. */
   durationMs: { median: number; max: number } | null;
   toolCalls: { total: number; failed: number };
   modelCalls: number;
@@ -24,6 +25,8 @@ export interface SliceSummary {
    * the run recorded no prices. Calls that could not be priced are counted, not guessed.
    */
   cost: { total: number; medianPerCase: number; unpricedModelCalls: number } | null;
+  /** Which labels were mistaken for which, for each check that sorts cases into labels. */
+  labels: LabelBreakdown[];
 }
 
 export interface RunSummary extends SliceSummary {
@@ -132,7 +135,8 @@ function summarizeSlice(
     evaluators.get(key)![BUCKET[verdict.outcome]].push(caseId);
   }
 
-  const durations = results.map((result) => result.durationMs).sort((a, b) => a - b);
+  // An imported answer carries no duration: the lab did not watch it being made.
+  const durations = results.flatMap(({ durationMs }) => (durationMs === undefined ? [] : [durationMs])).sort((a, b) => a - b);
   return {
     cases: results.length,
     byStatus,
@@ -146,6 +150,7 @@ function summarizeSlice(
     modelCalls,
     tokens: usageReported ? tokens : null,
     cost: prices ? costSummary(results, prices) : null,
+    labels: labelBreakdowns(evaluations),
   };
 }
 

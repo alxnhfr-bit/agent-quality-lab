@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { loadRun } from "@agent-quality-lab/core/store";
-import { RunStopped, UsageError, compareCommand, evalCommand, runCommand, type Project } from "./commands.ts";
+import { RunStopped, UsageError, compareCommand, evalCommand, importCommand, runCommand, type Project } from "./commands.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 
@@ -130,7 +131,62 @@ test("running several cases at once gives the same report as running them one by
       // The run id carries the time, and durations vary.
       .filter((line) => !line.startsWith("run ") && !line.startsWith("duration"));
   assert.deepEqual(await report(many, 6), await report(one, 1));
-  assert.equal((await loadRun(join(many.runsDir, await onlyRun(many.runsDir)))).manifest.settings.concurrency, 6);
+  assert.equal((await loadRun(join(many.runsDir, await onlyRun(many.runsDir)))).manifest.settings?.concurrency, 6);
+});
+
+/** Answers to every stock-check case, as another system might have recorded them, in a file outside the project. */
+async function answersFile(startedAt: string, keep = (_i: number) => true): Promise<string> {
+  const cases = (await readFile(join(root, "scenarios", "stock-check", "datasets", "dev.jsonl"), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { id: string; expected: { behaviour: string; canFulfil?: boolean } });
+  const answers = cases
+    .filter((_c, i) => keep(i))
+    .map((c) => (c.expected.behaviour === "abstain" ? { caseId: c.id, abstain: "cannot tell" } : { caseId: c.id, answer: { canFulfil: c.expected.canFulfil } }));
+  const file = join(await mkdtemp(join(tmpdir(), "aql-answers-")), "answers.json");
+  await writeFile(file, JSON.stringify({ candidate: { id: "elsewhere", version: "run-7", config: { system: "a spreadsheet" } }, startedAt, answers }));
+  return file;
+}
+
+test("import loads answers made elsewhere as a scored run, and says what the lab did not see", async () => {
+  const p = await project();
+  const file = await answersFile("2026-08-01T09:00:00.000Z");
+  const output = await importCommand(p, { scenario: "stock-check", answers: file });
+
+  assert.match(output, /^stock-check v1 · elsewhere run-7 · dataset dev · 12 cases\nrun 2026-08-01T09-00-00Z_stock-check_elsewhere\n/);
+  assert.match(output, /\nnote: these answers were imported from answers\.json, not run by the lab: it measured no durations/);
+  assert.match(output, /\ntool calls +not imported\n/);
+  assert.equal(output.includes("duration "), false);
+  assert.match(output, /\ncorrectness +1 +12\/12 /);
+
+  const run = await loadRun(join(p.runsDir, await onlyRun(p.runsDir)));
+  assert.deepEqual(run.manifest.origin, {
+    kind: "imported",
+    source: "answers.json",
+    sha256: createHash("sha256").update(await readFile(file)).digest("hex"),
+  });
+  assert.equal(run.manifest.settings, undefined);
+  assert.ok(run.results.every((result) => result.durationMs === undefined));
+
+  // Two imports compare like two runs, without claiming tool calls nobody recorded.
+  await importCommand(p, { scenario: "stock-check", answers: await answersFile("2026-08-02T09:00:00.000Z") });
+  const [a, b] = (await readdir(p.runsDir)).sort();
+  const comparison = await compareCommand(p, { a: a!, b: b! });
+  assert.match(comparison, /\nnote: A: these answers were imported from answers\.json/);
+  assert.match(comparison, /\ntool calls +not imported +not imported\n/);
+});
+
+test("import refuses answers that cannot be read or do not cover every case, and saves nothing", async () => {
+  const p = await project();
+  const refused = (file: string, message: RegExp) =>
+    assert.rejects(importCommand(p, { scenario: "stock-check", answers: file }), (error: unknown) => error instanceof UsageError && message.test(error.message));
+
+  await refused(join(p.runsDir, "nowhere.json"), /no answers file at/);
+  const broken = join(await mkdtemp(join(tmpdir(), "aql-answers-")), "broken.json");
+  await writeFile(broken, "{ not json");
+  await refused(broken, /broken\.json cannot be imported: /);
+  await refused(await answersFile("2026-08-01T09:00:00.000Z", (i) => i < 2), /cannot be imported: the answers cover 2 of the 12 cases; missing: /);
+  assert.deepEqual(await readdir(p.runsDir), []);
 });
 
 test("mistakes in usage name what is available", async () => {

@@ -22,7 +22,7 @@ import {
   type TraceEvent,
   type Verdict,
 } from "@agent-quality-lab/core";
-import { differsInResult, ms, share, unpriced, usd } from "../render.ts";
+import { differsInResult, ms, share, unpriced, untraced, usd, versioned } from "../render.ts";
 import { asset, html, type Markup } from "./markup.ts";
 
 export interface HtmlReport {
@@ -54,7 +54,7 @@ export function renderHtmlReport({ comparison, a, b }: HtmlReport): string {
 <header>
   <p class="eyebrow">Agent Quality Lab · comparison of two runs</p>
   <h1>${scenario.id} <small>v${scenario.version}</small></h1>
-  <p class="sub">dataset ${dataset.name} (${dataset.sha256.slice(0, 8)}) · ${comparison.cases.length} cases · time limit ${ms(a.manifest.settings.timeoutMs)} per case</p>
+  <p class="sub">dataset ${dataset.name} (${dataset.sha256.slice(0, 8)}) · ${comparison.cases.length} cases${a.manifest.settings && html` · time limit ${ms(a.manifest.settings.timeoutMs)} per case`}</p>
   <div class="runs">${runs.map(({ label, data }) => runCard(label, data.manifest))}</div>
   ${told(a.manifest.scenario.instructions !== undefined ? a.manifest.scenario : b.manifest.scenario)}
   ${
@@ -62,7 +62,7 @@ export function renderHtmlReport({ comparison, a, b }: HtmlReport): string {
     html`<p class="note">Not deterministic: ${sampled.join(", ")}. Each run is one sample, so a difference on a single case may be noise.</p>`
   }
 </header>
-${summarySection(comparison)}
+${summarySection(comparison, [a, b].map((run) => !untraced(run)))}
 ${tagSection(comparison)}
 ${casesSection(comparison, a, b)}
 </main>
@@ -93,9 +93,10 @@ function runCard(label: string, manifest: Manifest): Markup {
     ? `${environment.git.commit.slice(0, 7)}${environment.git.dirty ? ", with uncommitted changes" : ""}`
     : "not recorded";
   return html`<div class="card">
-    <h2><span class="side">${label}</span>${candidate.id} <small>v${candidate.version}</small></h2>
+    <h2><span class="side">${label}</span>${candidate.id} <small>${versioned(candidate.version)}</small></h2>
     <dl>
       <dt>Run</dt><dd><code>${manifest.runId}</code></dd>
+      ${manifest.origin && html`<dt>Origin</dt><dd>Imported from <code>${manifest.origin.source}</code>, not run by the lab</dd>`}
       <dt>Started</dt><dd>${manifest.startedAt}</dd>
       <dt>Deterministic</dt><dd>${candidate.deterministic ? "yes" : "no"}</dd>
       <dt>Config</dt><dd><code>${JSON.stringify(candidate.config)}</code></dd>
@@ -113,7 +114,7 @@ function count(caseIds: readonly string[], label: string, text: string = String(
   return html`<button class="count" data-cases="${JSON.stringify(caseIds)}" data-label="${label}" aria-label="${label}: ${text}. Show these cases" title="Show these cases">${text}</button>`;
 }
 
-function summarySection(comparison: Comparison): Markup {
+function summarySection(comparison: Comparison, traced: boolean[]): Markup {
   const sides: [string, RunSummary][] = [
     ["A", comparison.a.summary],
     ["B", comparison.b.summary],
@@ -134,7 +135,7 @@ function summarySection(comparison: Comparison): Markup {
       ${row("Fallbacks", (s, side) => count(s.fallbacks, `${side}: fallback`))}
       ${row("Median duration", (s) => (s.durationMs ? ms(s.durationMs.median) : "–"))}
       ${row("Max duration", (s) => (s.durationMs ? ms(s.durationMs.max) : "–"))}
-      ${row("Tool calls", (s) => `${s.toolCalls.total} (${s.toolCalls.failed} failed)`)}
+      ${row("Tool calls", (s, side) => (traced["AB".indexOf(side)] ? `${s.toolCalls.total} (${s.toolCalls.failed} failed)` : "not imported"))}
       ${sides.some(([, s]) => s.modelCalls > 0) && row("Model calls", (s) => String(s.modelCalls))}
       ${row("Tokens", (s) => (s.tokens ? `${s.tokens.input} in, ${s.tokens.output} out` : "none reported"))}
       ${sides.some(([, s]) => s.cost) && row("Cost", (s) => (s.cost ? `${usd(s.cost.total)}${unpriced(s)}` : "–"))}
@@ -335,7 +336,7 @@ function brief({ side, result, evaluations }: SideView): Markup {
 
 function sideDetail({ label, side, result, evaluations }: SideView): Markup {
   return html`<div class="column">
-    <h3><span class="side">${label}</span>${STATUS[result.status]} <small>in ${ms(side.durationMs)}</small></h3>
+    <h3><span class="side">${label}</span>${STATUS[result.status]}${side.durationMs !== undefined && html` <small>in ${ms(side.durationMs)}</small>`}</h3>
     ${outcomeBlock(result)}
     <div class="block">
       <p class="label">Verdicts</p>
@@ -350,7 +351,7 @@ function sideDetail({ label, side, result, evaluations }: SideView): Markup {
       <p class="label">Trace</p>
       ${
         result.trace.length === 0
-          ? html`<p class="empty">nothing observed or reported</p>`
+          ? html`<p class="empty">nothing observed, reported or imported</p>`
           : html`<ol class="trace">${result.trace.map(traceEvent)}</ol>`
       }
     </div>

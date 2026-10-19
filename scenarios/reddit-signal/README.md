@@ -53,13 +53,15 @@ Imported and scored by the lab, every full stored run arrives at the figure its 
 | Run | Labels | Right label | Held out |
 |---|---|---:|---:|
 | Agent, rewritten prompt | v2 | 57/91 (62.6%) | 41/74 |
-| Camunda, first run | v2.1 | 78/91 (85.7%) | 62/74 |
+| Camunda, first run | v2.1 | 78/91 (85.7%), 2 without an answer | 62/74, 1 without an answer |
 | Camunda, re-run | v2.1 | 79/91 (86.8%) | 62/74 |
 | MCP arm A, run 1 | v2.1 | 81/91 (89.0%) | 64/74 |
 | MCP arm A, run 2 | v2.1 | 79/91 (86.8%) | 62/74 |
 | MCP arm A, run 3 | v2.1 | 80/91 (87.9%) | 63/74 |
 | MCP arm B | v2.1 | 79/91 (86.8%) | 62/74 |
 | MCP arm C | v2.1 | 78/91 (85.7%) | 61/74 |
+
+The table counts right answers over all posts, as the projects' reports do. The lab's own report shows Camunda's first run as 78/89 + 2 without an answer: 78 right of the 89 answers it gave, and 2 posts with no answer at all.
 
 The agent's per-label precision and recall, and its table of which label was mistaken for which, match its own report as well. The agent's run from before the rubric rewrite cannot be reproduced: its answers were never stored in the project.
 
@@ -76,7 +78,7 @@ The lookups come from what each project recorded. MCP recorded every lookup: wha
 
 | Run | Verified | Restraint | Lookups on a post that should be `no_signal` |
 |---|---:|---:|---|
-| Camunda, first run | 7/9 | 59/62 | 1uq2v7u |
+| Camunda, first run | 7/7 + 2 without an answer | 59/60 + 2 without an answer | 1uq2v7u |
 | Camunda, re-run | 7/7 | 62/62 | none |
 | MCP arm A, run 1 | 8/8 | 61/62 | 1ute6a4 (Sedona) |
 | MCP arm A, run 2 | 8/8 | 61/62 | 1ute6a4 (Sedona) |
@@ -84,7 +86,7 @@ The lookups come from what each project recorded. MCP recorded every lookup: wha
 | MCP arm B | 8/8 | 61/62 | 1ute6a4 (Sedona) |
 | MCP arm C | 9/9 | 60/62 | 1ute6a4 (Sedona), 1uscl07 |
 
-Every figure matches the project's own report except for Camunda's first run, which its report gives as 7/7 and 61/62. The difference is the two posts with no recorded label, described below: the lab counts a post without an answer against every check, including these two.
+Every figure matches the project's own report except one. Camunda's first run has two posts with no recorded label, described below. The lab shows them beside each count as posts without an answer, since it has no answer to judge; the project's scorer judged them as answered with no lookup. So for restraint the lab has 59 of 60 judged posts, where the project's report has 61 of 62.
 
 A side-by-side comparison shows the lookups too: Camunda's re-run and MCP's second run differ on Sedona, where MCP looked the place up and then called the post a rising destination, and on two posts where Camunda made two lookups and MCP one.
 

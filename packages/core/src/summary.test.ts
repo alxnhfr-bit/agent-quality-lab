@@ -138,16 +138,16 @@ test("a run whose cases carry no tags has no breakdown", () => {
   assert.deepEqual(summarize(results, [], [{ id: "a" }, { id: "b" }]).byTag, []);
 });
 
-test("a pass count is out of the cases the evaluator applies to", () => {
+test("a pass count is out of the answers the evaluator judged, with the cases without an answer beside it", () => {
   const summary = summarize(results, [
     record("a", "style", { outcome: "pass" }),
     record("b", "style", { outcome: "not_applicable", detail: "no text" }),
     record("c", "style", skipped),
     record("d", "style", { outcome: "error", detail: "threw" }),
   ]);
-  // Not applicable is left out. Not completed and an evaluator error are not passes, and still count.
-  assert.deepEqual(passRate(summary, "style"), { pass: 1, of: 3 });
-  assert.deepEqual(passRate(summary, "unknown"), { pass: 0, of: 0 });
+  // Not applicable is left out. An evaluator error is not a pass and counts; a case without an answer is counted apart.
+  assert.deepEqual(passRate(summary, "style"), { pass: 1, of: 2, unanswered: 1 });
+  assert.deepEqual(passRate(summary, "unknown"), { pass: 0, of: 0, unanswered: 0 });
 });
 
 test("with prices, a summary says what the model calls cost in total and per case", () => {

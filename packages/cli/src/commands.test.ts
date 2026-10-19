@@ -36,7 +36,7 @@ test("run executes a candidate, writes the run and scores it", async () => {
   assert.equal(progress.length, 12);
   assert.equal(progress[0], "[1/12] in-stock: completed");
   assert.match(output, new RegExp(`^stock-check v1 · baseline v1 · dataset dev · 12 cases\nrun ${runId}\n`));
-  assert.match(output, /correctness  1        12\/12  0     0    0                0/);
+  assert.match(output, /correctness  1        12\/12  0     0    0\n/);
   assert.match(output, /\ntag +cases +completed +correctness pass +tool-use pass\nboundary +5 +5\/5 +5\/5 +5\/5\n/);
 });
 
@@ -70,7 +70,7 @@ test("compare shows where two stored runs differ, and refuses a run that is not 
 
   const output = await compareCommand(p, { a, b });
   assert.match(output, /\nA  baseline v1    run .*_baseline\nB  mock-agent v1  run .*_mock-agent\n/);
-  assert.match(output, /\ncorrectness pass +12\/12 +6\/12\n/);
+  assert.match(output, /\ncorrectness pass +12\/12 +6\/9 \+ 3 without an answer\n/);
   assert.match(output, /\n  correctness  passes only in A \(6\)  in-stock, small-exact, small-one-over, unknown-item, flaky-lookup-over, service-down\n/);
   assert.match(output, /\ncases that differ in status or verdicts \(8 of 12\)\n/);
   assert.match(output, /\ntool-failure +3 +3\/3 · 3\/3 +3\/3 · 1\/3 +3\/3 · 0\/3\n/);
@@ -159,7 +159,7 @@ test("import loads answers made elsewhere as a scored run, and says what the lab
   assert.equal(output.includes("duration "), false);
   assert.match(output, /\ncorrectness +1 +12\/12 /);
   // The file does not say which tools the system had, so the check that reads tool calls does not judge it.
-  assert.match(output, /\ntool-use +1 +n\/a +0 +12 +0 +0\n/);
+  assert.match(output, /\ntool-use +1 +n\/a +0 +12 +0\n/);
 
   const run = await loadRun(join(p.runsDir, await onlyRun(p.runsDir)));
   assert.deepEqual(run.manifest.origin, {

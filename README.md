@@ -112,8 +112,8 @@ Next to the result, the lab records a trace: tool calls with their arguments, re
 A few rules keep the numbers honest:
 
 - The runner never retries a case and never substitutes an output.
-- Evaluators only see completed cases. A case that did not complete is recorded as `not_evaluated` for every evaluator and counts against the candidate.
-- A pass count is out of the cases an evaluator applies to. Cases it calls not applicable are left out and shown in their own column.
+- Evaluators only see completed cases. A case that did not complete has no answer to judge: it is recorded as `not_evaluated` for every evaluator, and every pass count shows it beside the count, as in "6/9 + 3 without an answer". It is never dropped, and never read as an answer that was judged.
+- A pass count is out of the answers an evaluator judged. Cases it calls not applicable are left out and shown in their own column.
 - An evaluator that throws is recorded as an evaluator error. It is neither a pass nor a fail for the candidate.
 - Every candidate is given the same instructions and the same tools, described the same way. A run records both.
 - Two runs are only compared if they used the same scenario version, instructions, tools, dataset, time limit and evaluator versions. Otherwise `aql compare` refuses and lists the reasons.
@@ -219,17 +219,17 @@ The `stock-check` scenario has 12 cases. In three of them the right behaviour is
 | Error | 0 | 1 |
 | Timeout | 0 | 1 |
 | Fallbacks | 0 | 3 |
-| Correctness: pass | 12/12 | 6/12 |
-| Tool use: pass | 12/12 | 5/12 |
+| Correctness: pass | 12/12 | 6/9 + 3 without an answer |
+| Tool use: pass | 12/12 | 5/9 + 3 without an answer |
 | Tool calls | 15 (4 failed) | 11 (3 failed) |
 
 Below the totals, the comparison breaks the counts down by tag and lists the cases behind every difference:
 
 ```text
-tag             cases  completed A · B  correctness pass A · B  tool-use pass A · B
-boundary        5      5/5 · 4/5        5/5 · 3/5               5/5 · 3/5
-should-abstain  3      3/3 · 2/3        3/3 · 1/3               3/3 · 1/3
-tool-failure    3      3/3 · 3/3        3/3 · 1/3               3/3 · 0/3
+tag             cases  completed A · B  correctness pass A · B           tool-use pass A · B
+boundary        5      5/5 · 4/5        5/5 · 3/4 + 1 without an answer  5/5 · 3/4 + 1 without an answer
+should-abstain  3      3/3 · 2/3        3/3 · 1/2 + 1 without an answer  3/3 · 1/2 + 1 without an answer
+tool-failure    3      3/3 · 3/3        3/3 · 1/3                        3/3 · 0/3
 
 by evaluator
   correctness  passes only in A (6)  in-stock, small-exact, small-one-over, unknown-item, flaky-lookup-over, service-down
@@ -309,7 +309,7 @@ Measurement:
 - The lab sees only what goes through its own tools. A candidate's own tool calls, model calls and fallbacks appear only if the candidate reports them. A silent fallback inside an opaque candidate cannot be detected.
 - Model calls and their token counts are reported by the candidate. For the model candidates they are the provider's own figures, passed on.
 - A cost is those token counts at a price list kept in the repository by hand and saved with each run. It is not the provider's bill, and the list can go out of date. A call that cannot be priced is counted as such, not as free.
-- A request the provider fails, for example under a rate limit, is recorded as an error of that case. It counts against the candidate although the candidate did nothing wrong, so such a run is better repeated.
+- A request the provider fails, for example under a rate limit, is recorded as an error of that case, which then has no answer, although the candidate did nothing wrong. Such a run is better repeated.
 - Durations are wall-clock time on the machine that ran the lab, summarised as median and maximum.
 - Versions of scenarios, candidates and evaluators are strings their authors declare. The lab records them with the dataset hash and the git commit, but cannot check that a version was changed when behaviour changed.
 - The scenarios' evaluators are deterministic code. In the interface the judge is a model, and a model can be wrong. Nothing yet measures how often it agrees with a person, and there is no human review.

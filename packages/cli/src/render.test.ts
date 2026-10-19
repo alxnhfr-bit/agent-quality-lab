@@ -57,10 +57,11 @@ test("a run is shown with its counts and every case behind a failure", () => {
       "duration    median 3.00 ms, max 20 ms",
       "tool calls  1, of which 0 failed",
       "",
-      "evaluator    version  pass  fail  n/a  evaluator error  not evaluated",
-      "correctness  1        1/3   1     0    0                1",
-      // style does not apply to case a, so it is judged on two cases, not three.
-      "style        2        0/2   0     1    1                1",
+      // Case b has no answer: it is shown beside each count, not read as a judged answer.
+      "evaluator    version  pass                       fail  n/a  evaluator error",
+      "correctness  1        1/2 + 1 without an answer  1     0    0",
+      // style does not apply to case a, so it judged one answer, not two.
+      "style        2        0/1 + 1 without an answer  0     1    1",
       "",
       "not completed",
       "  b  timeout after 20 ms",
@@ -92,7 +93,7 @@ test("a run in which nothing completed still shows its evaluators, with nothing 
   const failed = results.slice(1, 2);
   const skipped = evaluations.filter((record) => record.caseId === "b");
   const text = renderRun({ manifest, results: failed, evaluations: skipped, summary: summarize(failed, skipped) });
-  assert.match(text, /correctness  1        0\/1   0     0    0                1/);
+  assert.match(text, /correctness  1        1 without an answer  0     0    0\n/);
   assert.doesNotMatch(text, /\nfailed\n/);
 });
 
@@ -150,19 +151,19 @@ test("a comparison shows both runs side by side, then where they differ", () => 
       "",
       "note: not deterministic: agent. Each run is one sample, so a difference on a single case may be noise",
       "",
-      "                  A              B",
-      "completed         2/3            3/3",
-      "malformed output  0              0",
-      "error             0              0",
-      "timeout           1              0",
-      "fallbacks         0              1",
-      "correctness pass  1/3            2/3",
-      "style pass        0/2            1/3",
-      "median duration   3.00 ms        8.00 ms",
-      "max duration      20 ms          12 ms",
-      "tool calls        1 (0 failed)   2 (1 failed)",
-      "model calls       0              1",
-      "tokens            none reported  30 in, 4 out",
+      "                  A                          B",
+      "completed         2/3                        3/3",
+      "malformed output  0                          0",
+      "error             0                          0",
+      "timeout           1                          0",
+      "fallbacks         0                          1",
+      "correctness pass  1/2 + 1 without an answer  2/3",
+      "style pass        0/1 + 1 without an answer  1/3",
+      "median duration   3.00 ms                    8.00 ms",
+      "max duration      20 ms                      12 ms",
+      "tool calls        1 (0 failed)               2 (1 failed)",
+      "model calls       0                          1",
+      "tokens            none reported              30 in, 4 out",
       "",
       "by evaluator",
       "  correctness  passes only in B (1)    b",
@@ -200,9 +201,9 @@ test("a run with tagged cases also shows its counts per tag", () => {
     text.includes(
       [
         "",
-        "tag   cases  completed  correctness pass  style pass",
-        "easy  2      1/2        1/2               0/1",
-        "slow  1      0/1        0/1               0/1",
+        "tag   cases  completed  correctness pass           style pass",
+        "easy  2      1/2        1/1 + 1 without an answer  1 without an answer",
+        "slow  1      0/1        1 without an answer        1 without an answer",
         "",
       ].join("\n"),
     ),
@@ -218,9 +219,9 @@ test("a comparison shows both sides per tag", () => {
     text.includes(
       [
         "",
-        "tag   cases  completed A · B  correctness pass A · B  style pass A · B",
-        "easy  2      1/2 · 2/2        1/2 · 2/2               0/1 · 1/2",
-        "slow  1      0/1 · 1/1        0/1 · 1/1               0/1 · 0/1",
+        "tag   cases  completed A · B  correctness pass A · B           style pass A · B",
+        "easy  2      1/2 · 2/2        1/1 + 1 without an answer · 2/2  1 without an answer · 1/2",
+        "slow  1      0/1 · 1/1        1 without an answer · 1/1        1 without an answer · 0/1",
         "",
       ].join("\n"),
     ),
@@ -252,6 +253,6 @@ test("a check that applies to no case in a tag shows as not applicable, not as z
     evaluations: onlyStyle,
     summary: summarize(one, onlyStyle, [{ id: "a", tags: ["easy"] }]),
   });
-  assert.match(text, /\nstyle      2        n\/a   0     1    0                0\n/);
+  assert.match(text, /\nstyle      2        n\/a   0     1    0\n/);
   assert.match(text, /\neasy  1      1\/1        n\/a$/);
 });

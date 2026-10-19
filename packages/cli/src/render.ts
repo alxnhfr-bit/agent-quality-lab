@@ -68,7 +68,7 @@ export function renderRun({ manifest, results, evaluations, summary, notes = [] 
   } else {
     lines.push(
       ...table([
-        ["evaluator", "version", "pass", "fail", "n/a", "evaluator error", "not evaluated"],
+        ["evaluator", "version", "pass", "fail", "n/a", "evaluator error"],
         ...summary.evaluators.map((e) => [
           e.id,
           e.version,
@@ -76,7 +76,6 @@ export function renderRun({ manifest, results, evaluations, summary, notes = [] 
           String(e.fail.length),
           String(e.notApplicable.length),
           String(e.error.length),
-          String(e.notEvaluated.length),
         ]),
       ]),
     );
@@ -275,8 +274,10 @@ export function renderLabels(breakdown: LabelBreakdown): string[] {
   return lines;
 }
 
-export function share({ pass, of }: { pass: number; of: number }): string {
-  return of === 0 ? "n/a" : `${pass}/${of}`;
+/** "7/9", or "7/7 + 2 without an answer" when some cases had none, so a missing answer is never read as a judged one. */
+export function share({ pass, of, unanswered = 0 }: { pass: number; of: number; unanswered?: number }): string {
+  const parts = [...(of > 0 ? [`${pass}/${of}`] : []), ...(unanswered > 0 ? [`${unanswered} without an answer`] : [])];
+  return parts.length === 0 ? "n/a" : parts.join(" + ");
 }
 
 export function differsInResult(c: CaseComparison): boolean {

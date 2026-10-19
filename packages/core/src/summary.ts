@@ -53,14 +53,16 @@ export interface EvaluatorSummary {
 }
 
 /**
- * How many cases an evaluator passed, out of those it applies to. A case the
- * evaluator calls not applicable is left out; one that did not complete, or on
- * which the evaluator itself failed, still counts.
+ * How many answers an evaluator passed, out of those it judged. A case the
+ * evaluator calls not applicable is left out, and one on which the evaluator
+ * itself failed still counts. A case without an answer, because it did not
+ * complete, could not be judged: it is counted apart as `unanswered`, to be
+ * shown beside the count, never dropped from it.
  */
-export function passRate(slice: SliceSummary, evaluatorId: string): { pass: number; of: number } {
+export function passRate(slice: SliceSummary, evaluatorId: string): { pass: number; of: number; unanswered: number } {
   const e = slice.evaluators.find((evaluator) => evaluator.id === evaluatorId);
-  if (!e) return { pass: 0, of: 0 };
-  return { pass: e.pass.length, of: e.pass.length + e.fail.length + e.error.length + e.notEvaluated.length };
+  if (!e) return { pass: 0, of: 0, unanswered: 0 };
+  return { pass: e.pass.length, of: e.pass.length + e.fail.length + e.error.length, unanswered: e.notEvaluated.length };
 }
 
 const BUCKET = {

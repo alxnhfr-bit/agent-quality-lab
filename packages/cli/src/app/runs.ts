@@ -5,7 +5,7 @@
  */
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { evaluateRun, executeRun, type Prices } from "@agent-quality-lab/core";
+import { evaluateRun, executeRun, toolRecordOf, type Prices } from "@agent-quality-lab/core";
 import {
   loadRun,
   openRun,
@@ -96,7 +96,7 @@ export class Runs {
 
           set({ phase: "judging", done: 0, total });
           await judgeAll(dataset.cases, run.results, CONCURRENCY, (done) => set({ phase: "judging", done, total }));
-          await writeEvaluations(writer!.dir, await evaluateRun(scenario, dataset.cases, run.results));
+          await writeEvaluations(writer!.dir, await evaluateRun(scenario, dataset.cases, run.results, toolRecordOf(run.manifest)));
           const lines = (await judgements()).map((line) => `${JSON.stringify(line)}\n`).join("");
           writeFileSync(join(writer!.dir, "judge.jsonl"), lines);
           set({ phase: "done" });

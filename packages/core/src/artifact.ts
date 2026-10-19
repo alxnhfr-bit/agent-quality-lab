@@ -241,6 +241,12 @@ export const manifestSchema = z.strictObject({
       /** The file the answers were loaded from, as named when they were imported. */
       source: z.string().min(1),
       sha256: z.string().regex(/^[0-9a-f]{64}$/),
+      /**
+       * The tools the source system could call, as the import said. Its tool
+       * calls then came with the answers, reported by the source. Absent when
+       * that is not known, and then neither are its tool calls.
+       */
+      tools: z.array(z.strictObject({ name: id, description: z.string().optional() })).optional(),
     })
     .optional(),
   prices: pricesSchema.optional(),

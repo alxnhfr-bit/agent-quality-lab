@@ -10,10 +10,11 @@
  *
  * The scenario tells a candidate nothing. Each project brought its own rubric
  * and prompt, recorded with its runs; this scenario holds only the posts, the
- * labels they should get, and the check.
+ * labels they should get, and the checks: the label, and for systems that had
+ * the place check, whether they used it as their prompts said.
  */
 import { z } from "zod";
-import { jsonSchemaOf, type Evaluator, type Scenario } from "@agent-quality-lab/core";
+import { jsonSchemaOf, type Evaluator, type Scenario, type TraceEvent } from "@agent-quality-lab/core";
 
 export const LABELS = [
   "competitor_mentions",
@@ -57,6 +58,75 @@ const label: Evaluator<Input, Output, Expected> = {
   },
 };
 
+/** The tool the Camunda and MCP projects gave their systems, which asks Google Places whether a place exists. */
+export const PLACE_CHECK = "verify_place";
+
+const lookups = (trace: readonly TraceEvent[]) =>
+  trace.filter((event): event is Extract<TraceEvent, { type: "tool_call" }> => event.type === "tool_call");
+
+/** Why a place check says nothing about a system: it could not check places, or nobody recorded whether it could. */
+function withoutPlaceCheck(tools: readonly string[] | undefined) {
+  if (tools?.includes(PLACE_CHECK)) return undefined;
+  return {
+    outcome: "not_applicable" as const,
+    detail: tools === undefined ? "it is not known whether this system could check places" : "this system had no place check",
+  };
+}
+
+/**
+ * The tool policy of the Camunda and MCP prompts: a post is only called a
+ * rising destination once a place in it has been confirmed to exist. Mirrors
+ * the projects' own "predictions with required grounding".
+ */
+const verified: Evaluator<Input, Output, Expected> = {
+  id: "verified",
+  version: "1",
+  readsToolCalls: true,
+  evaluate(_c, { output, trace, tools }) {
+    const cannot = withoutPlaceCheck(tools);
+    if (cannot) return cannot;
+    if (output.kind === "abstain" || output.value.label !== "rising_destinations") {
+      return { outcome: "not_applicable", detail: "only a post labelled rising_destinations needs a confirmed place" };
+    }
+    const confirmed = lookups(trace).filter((call) => call.name === PLACE_CHECK && found(call.result));
+    return confirmed.length > 0
+      ? { outcome: "pass", value: confirmed.length }
+      : { outcome: "fail", detail: "labelled rising_destinations without a confirmed place" };
+  },
+};
+
+/**
+ * The other half of the policy: a post with nothing in it gets no lookup at
+ * all. Mirrors the projects' own "no_signal posts with zero tool calls".
+ */
+const restraint: Evaluator<Input, Output, Expected> = {
+  id: "restraint",
+  version: "1",
+  readsToolCalls: true,
+  evaluate(c, { trace, tools }) {
+    const cannot = withoutPlaceCheck(tools);
+    if (cannot) return cannot;
+    if (c.expected?.label !== "no_signal") {
+      return { outcome: "not_applicable", detail: "only a post that should be no_signal must get no lookup" };
+    }
+    const calls = lookups(trace);
+    if (calls.length === 0) return { outcome: "pass", value: 0 };
+    const asked = calls.flatMap((call) => {
+      const place = typeof call.args === "object" && call.args !== null && "placeName" in call.args ? call.args.placeName : undefined;
+      return typeof place === "string" ? [place] : [];
+    });
+    return {
+      outcome: "fail",
+      value: calls.length,
+      detail: `looked up ${calls.length === 1 ? "a place" : `${calls.length} places`} on a post with nothing in it${asked.length > 0 ? `: ${asked.join(", ")}` : ""}`,
+    };
+  },
+};
+
+function found(result: unknown): boolean {
+  return typeof result === "object" && result !== null && "found" in result && result.found === true;
+}
+
 const scenario: Scenario<Input, Output, Expected> = {
   id: "reddit-signal",
   version: "1",
@@ -70,7 +140,7 @@ const scenario: Scenario<Input, Output, Expected> = {
     "labels-v2": new URL("./datasets/labels-v2.jsonl", import.meta.url),
     "labels-v2.1": new URL("./datasets/labels-v2.1.jsonl", import.meta.url),
   },
-  evaluators: [label],
+  evaluators: [label, verified, restraint],
   timeoutMs: 120_000,
 };
 

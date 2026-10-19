@@ -104,6 +104,7 @@ const correctness: Evaluator<Input, Output, Expected> = {
 const toolUse: Evaluator<Input, Output, Expected> = {
   id: "tool-use",
   version: "1",
+  readsToolCalls: true,
   evaluate(c, { output, trace }) {
     if (!c.expected) return { outcome: "not_applicable", detail: "the case has no expected behaviour" };
     const calls = trace.filter((event) => event.type === "tool_call");

@@ -18,8 +18,27 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import type { ImportedAnswers, JsonValue } from "@agent-quality-lab/core";
+import { PLACE_CHECK } from "./scenario.ts";
 
 type Candidate = ImportedAnswers["candidate"];
+type ToolCall = NonNullable<ImportedAnswers["answers"][number]["toolCalls"]>[number];
+
+/** A line of the Camunda and MCP runners' results.jsonl, as far as the import reads it. */
+export interface StoredPost {
+  post_id: string;
+  predicted?: string | null;
+  error?: string | null;
+  toolCalls?: number;
+  groundedPlaces?: { placeName: string; canonicalName?: string; placeId?: string }[];
+  toolTrace?: {
+    query: JsonValue;
+    found: boolean;
+    canonicalName?: string | null;
+    placeId?: string | null;
+    errorCode?: string | null;
+    durationMs?: number;
+  }[];
+}
 
 // --- Reading the projects' files ---------------------------------------------------
 
@@ -109,20 +128,87 @@ export function answersFromPredictions(csv: string, candidate: Candidate): Impor
   };
 }
 
-/** Answers from a results.jsonl of the Camunda and MCP runners: one post per line, with `predicted` and `error`. */
-export function answersFromResults(jsonl: string, candidate: Candidate, startedAt?: string): ImportedAnswers {
+/**
+ * Answers from a results.jsonl of the Camunda and MCP runners: one post per
+ * line, with `predicted` and `error`, and the place lookups as each project
+ * recorded them when `lookups` says how to read them.
+ */
+export function answersFromResults(
+  jsonl: string,
+  candidate: Candidate,
+  options: {
+    startedAt?: string | undefined;
+    tools?: ImportedAnswers["tools"];
+    lookups?: (row: StoredPost) => ToolCall[];
+  } = {},
+): ImportedAnswers {
   const answers = jsonl
     .split("\n")
     .filter((line) => line.trim() !== "")
     .map((line) => {
-      const row = JSON.parse(line) as { post_id: string; predicted?: string | null; error?: string | null };
-      if (row.error) return { caseId: row.post_id, error: row.error };
+      const row = JSON.parse(line) as StoredPost;
+      const calls = options.lookups ? { toolCalls: options.lookups(row) } : {};
+      if (row.error) return { caseId: row.post_id, error: row.error, ...calls };
       if (row.predicted === null || row.predicted === undefined) {
-        return { caseId: row.post_id, error: "the run recorded no label for this post" };
+        return { caseId: row.post_id, error: "the run recorded no label for this post", ...calls };
       }
-      return { caseId: row.post_id, answer: { label: row.predicted } };
+      return { caseId: row.post_id, answer: { label: row.predicted }, ...calls };
     });
-  return { candidate, ...(startedAt && { startedAt }), answers };
+  return {
+    candidate,
+    ...(options.startedAt && { startedAt: options.startedAt }),
+    ...(options.tools && { tools: options.tools }),
+    answers,
+  };
+}
+
+/** MCP recorded every lookup: what was asked, and what came back. */
+export function mcpLookups(row: StoredPost): ToolCall[] {
+  const trace = row.toolTrace ?? [];
+  if (trace.length !== (row.toolCalls ?? 0)) {
+    throw new Error(`post ${row.post_id}: ${row.toolCalls} tool calls counted, but ${trace.length} recorded`);
+  }
+  return trace.map((call) => ({
+    name: PLACE_CHECK,
+    args: call.query,
+    ...(call.errorCode
+      ? { error: call.errorCode }
+      : { result: { found: call.found, canonicalName: call.canonicalName ?? null, placeId: call.placeId ?? null } }),
+    ...(call.durationMs !== undefined && { durationMs: call.durationMs }),
+  }));
+}
+
+/**
+ * Camunda recorded less: how many lookups a post got, and the places they
+ * confirmed. Each confirmed place becomes a lookup that found it; a lookup
+ * beyond those becomes one whose question and answer were not recorded.
+ * What was asked is never known, so `args` is null.
+ *
+ * The two can disagree: the count was read from a store that lags behind the
+ * engine. A confirmed place carries an id only a lookup returns, so it counts
+ * as a lookup even when the count missed it; `camundaCorrections` lists where.
+ */
+export function camundaLookups(row: StoredPost): ToolCall[] {
+  const places = row.groundedPlaces ?? [];
+  const count = Math.max(row.toolCalls ?? 0, places.length);
+  return [
+    ...places.map((place) => ({ name: PLACE_CHECK, args: null, result: { found: true, ...place } })),
+    ...Array.from({ length: count - places.length }, () => ({ name: PLACE_CHECK, args: null })),
+  ];
+}
+
+/** The posts whose lookup count was raised to match their confirmed places, said in a line each. */
+export function camundaCorrections(jsonl: string): string[] {
+  return jsonl
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as StoredPost)
+    .filter((row) => (row.groundedPlaces?.length ?? 0) > (row.toolCalls ?? 0))
+    .map(
+      (row) =>
+        `${row.post_id}: ${row.groundedPlaces!.length} confirmed place(s) but ${row.toolCalls ?? 0} lookup(s) counted; ` +
+        "taken as one lookup per confirmed place",
+    );
 }
 
 /** "run-2026-07-23T18-26-12..." → "2026-07-23T18:26:12Z". The runners name their folders after the start in UTC. */
@@ -184,6 +270,8 @@ function main(): void {
       labels: "as the model wrote them, uncorrected",
     },
   });
+  // It had no tool, so the place-check rules do not apply to it.
+  agentAnswers.tools = [];
   write(join(imports, "labels-v2", "signal-agent.json"), json(agentAnswers), `${agentAnswers.answers.length} answers`);
 
   const skipped: string[] = [];
@@ -191,8 +279,10 @@ function main(): void {
 
   for (const run of runs(camunda)) {
     const file = join("eval", "results", run, "results.jsonl");
+    const jsonl = readFileSync(join(camunda, file), "utf8");
+    const corrections = camundaCorrections(jsonl);
     const answers = answersFromResults(
-      readFileSync(join(camunda, file), "utf8"),
+      jsonl,
       {
         id: "camunda",
         version: run,
@@ -203,13 +293,17 @@ function main(): void {
           model: "claude-sonnet-5",
           reads: "subreddit and title",
           requests: "one post at a time, as a Camunda process instance",
-          tools: ["verify_place"],
+          lookups: "recorded as how many each post got and which places they confirmed; what was asked is not recorded",
+          ...(corrections.length > 0 && { lookupCorrections: corrections }),
         },
       },
-      startOf(run),
+      { startedAt: startOf(run), tools: [{ name: PLACE_CHECK }], lookups: camundaLookups },
     );
     if (answers.answers.length !== POSTS) skipped.push(`  camunda ${run}: ${answers.answers.length} of ${POSTS} posts`);
-    else write(join(imports, "labels-v2.1", `camunda-${run}.json`), json(answers), `${POSTS} answers`);
+    else {
+      const corrected = corrections.length > 0 ? `; lookups corrected for ${corrections.map((c) => c.split(":")[0]).join(", ")}` : "";
+      write(join(imports, "labels-v2.1", `camunda-${run}.json`), json(answers), `${POSTS} answers${corrected}`);
+    }
   }
 
   for (const run of runs(mcp)) {
@@ -231,7 +325,16 @@ function main(): void {
           ...pick(settings, ["label", "model", "maxTokens", "temperature", "maxModelCalls", "rubricArm", "toolDescriptionId"]),
         },
       },
-      typeof settings.startedAt === "string" ? settings.startedAt : startOf(run),
+      {
+        startedAt: typeof settings.startedAt === "string" ? settings.startedAt : startOf(run),
+        tools: [
+          {
+            name: PLACE_CHECK,
+            ...(typeof settings.toolDescriptionText === "string" && { description: settings.toolDescriptionText }),
+          },
+        ],
+        lookups: mcpLookups,
+      },
     );
     if (answers.answers.length !== POSTS) skipped.push(`  mcp ${run}: ${answers.answers.length} of ${POSTS} posts`);
     else write(join(imports, "labels-v2.1", `mcp-${run}.json`), json(answers), `${POSTS} answers`);

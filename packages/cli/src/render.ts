@@ -49,7 +49,7 @@ export function renderRun({ manifest, results, evaluations, summary, notes = [] 
   }
   facts.push([
     "tool calls",
-    untraced({ manifest, results }) ? "not imported" : `${summary.toolCalls.total}, of which ${summary.toolCalls.failed} failed`,
+    untraced({ manifest }) ? "not imported" : `${summary.toolCalls.total}, of which ${summary.toolCalls.failed} failed`,
   ]);
   if (summary.modelCalls > 0) facts.push(["model calls", String(summary.modelCalls)]);
   if (summary.tokens) {
@@ -235,9 +235,9 @@ export function imported(origin: NonNullable<Manifest["origin"]>): string {
   return `these answers were imported from ${origin.source}, not run by the lab: it measured no durations, and knows only what was imported with them`;
 }
 
-/** An imported run that came without any trace: its tool and model calls are unknown, not zero. */
-export function untraced(run: Pick<RunData, "manifest" | "results">): boolean {
-  return run.manifest.origin !== undefined && run.results.every((result) => result.trace.length === 0);
+/** An imported run that did not say which tools the system had: its tool calls are unknown, not zero. */
+export function untraced(run: Pick<RunData, "manifest">): boolean {
+  return run.manifest.origin !== undefined && run.manifest.origin.tools === undefined;
 }
 
 /** "v1" for a numbered version, the name itself for a named one. */

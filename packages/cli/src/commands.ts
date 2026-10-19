@@ -13,6 +13,7 @@ import {
   executeRun,
   importRun,
   summarize,
+  toolRecordOf,
   type Candidate,
   type Scenario,
 } from "@agent-quality-lab/core";
@@ -100,7 +101,7 @@ export async function runCommand(
     );
   }
 
-  const evaluations = await evaluateRun(scenario, dataset.cases, run.results);
+  const evaluations = await evaluateRun(scenario, dataset.cases, run.results, toolRecordOf(run.manifest));
   await writeEvaluations(writer!.dir, evaluations);
 
   return renderRun({
@@ -139,7 +140,7 @@ export async function importCommand(
     throw new UsageError(`${args.answers} cannot be imported: ${reason}`);
   }
   const dir = await writeRun(project.runsDir, run, dataset);
-  const evaluations = await evaluateRun(scenario, dataset.cases, run.results);
+  const evaluations = await evaluateRun(scenario, dataset.cases, run.results, toolRecordOf(run.manifest));
   await writeEvaluations(dir, evaluations);
 
   return renderRun({
@@ -163,7 +164,7 @@ export async function evalCommand(project: Project, args: { run: string }): Prom
   const scenario = await loadScenario(project.root, run.manifest.scenario.id);
   // Scored against the cases the run actually used, not whatever the dataset contains today.
   const dataset = parseDataset(scenario, run.manifest.dataset.name, run.datasetText);
-  const evaluations = await evaluateRun(scenario, dataset.cases, run.results);
+  const evaluations = await evaluateRun(scenario, dataset.cases, run.results, toolRecordOf(run.manifest));
   await writeEvaluations(dir, evaluations);
 
   const notes =

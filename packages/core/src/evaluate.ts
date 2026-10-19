@@ -12,16 +12,33 @@ import {
   judgmentSchema,
   type CaseResult,
   type EvaluationRecord,
+  type Manifest,
   type Verdict,
 } from "./artifact.ts";
 import type { Case, CompletedCase, Evaluator, Scenario } from "./types.ts";
 
 type Completed = Extract<CaseResult, { status: "completed" }>;
 
+/** What a run knows about the tools behind its answers. */
+export interface ToolRecord {
+  /** Whether the run's tool calls were recorded. Always so for a run the lab made. */
+  calls: boolean;
+  /** The tools the candidate could call, by name, when that is known. */
+  tools?: readonly string[];
+}
+
+/** Read from a run's manifest: the scenario's tools for a run of the lab, the source's for an imported one. */
+export function toolRecordOf(manifest: Manifest): ToolRecord {
+  const named = (tools: readonly { name: string }[]) => tools.map((tool) => tool.name);
+  if (manifest.origin) return manifest.origin.tools ? { calls: true, tools: named(manifest.origin.tools) } : { calls: false };
+  return { calls: true, ...(manifest.scenario.tools && { tools: named(manifest.scenario.tools) }) };
+}
+
 export async function evaluateRun<I, O, E, S>(
   scenario: Pick<Scenario<I, O, E, S>, "outputSchema" | "evaluators">,
   cases: readonly Case<I, E, S>[],
   results: readonly CaseResult[],
+  record: ToolRecord = { calls: true },
 ): Promise<EvaluationRecord[]> {
   const evaluators = scenario.evaluators.map((evaluator) => ({
     evaluator,
@@ -38,13 +55,15 @@ export async function evaluateRun<I, O, E, S>(
     const c = casesById.get(result.caseId);
     if (!c) throw new Error(`there is a result for case "${result.caseId}", which is not in the dataset`);
 
-    const completed = result.status === "completed" ? typed(scenario.outputSchema, result) : null;
+    const completed = result.status === "completed" ? typed(scenario.outputSchema, result, record.tools) : null;
     for (const { evaluator, label } of evaluators) {
       let verdict: Verdict;
       if (completed === null) {
         verdict = { outcome: "not_evaluated", detail: `the case did not complete (${result.status})` };
       } else if ("problem" in completed) {
         verdict = { outcome: "error", detail: completed.problem };
+      } else if (evaluator.readsToolCalls && !record.calls) {
+        verdict = { outcome: "not_applicable", detail: "the run did not record its tool calls" };
       } else {
         verdict = await judge(evaluator, c, completed);
       }
@@ -58,12 +77,13 @@ export async function evaluateRun<I, O, E, S>(
 function typed<O>(
   outputSchema: Scenario<unknown, O, unknown>["outputSchema"],
   { output, trace, durationMs }: Completed,
+  tools: readonly string[] | undefined,
 ): CompletedCase<O> | { problem: string } {
-  const timing = durationMs === undefined ? {} : { durationMs };
-  if (output.kind === "abstain") return { output, trace, ...timing };
+  const known = { ...(durationMs !== undefined && { durationMs }), ...(tools && { tools }) };
+  if (output.kind === "abstain") return { output, trace, ...known };
   const value = outputSchema.safeParse(output.value);
   return value.success
-    ? { output: { kind: "answer", value: value.data }, trace, ...timing }
+    ? { output: { kind: "answer", value: value.data }, trace, ...known }
     : { problem: "the stored answer no longer fits the scenario's output schema" };
 }
 

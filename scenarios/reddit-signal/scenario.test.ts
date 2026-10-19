@@ -1,8 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluateRun, importRun } from "@agent-quality-lab/core";
+import { evaluateRun, importRun, toolRecordOf, type EvaluationRecord, type ImportedAnswers } from "@agent-quality-lab/core";
 import { parseDataset } from "@agent-quality-lab/core/store";
-import { answersFromPredictions, answersFromResults, datasetFromLabels, parseCsv, startOf } from "./prepare.ts";
+import {
+  answersFromPredictions,
+  answersFromResults,
+  camundaCorrections,
+  camundaLookups,
+  datasetFromLabels,
+  mcpLookups,
+  parseCsv,
+  startOf,
+  type StoredPost,
+} from "./prepare.ts";
 import scenario from "./scenario.ts";
 
 // Made-up posts in the projects' file formats. The real ones are not part of this repository.
@@ -52,7 +62,7 @@ test("a post scores when it gets its label, and every verdict says which label i
   const evaluations = await evaluateRun(scenario, dataset.cases, run.results);
 
   assert.deepEqual(
-    evaluations.map(({ caseId, verdict }) => [caseId, verdict]),
+    evaluations.filter(({ evaluator }) => evaluator.id === "label").map(({ caseId, verdict }) => [caseId, verdict]),
     [
       ["p1", { outcome: "pass", label: { expected: "rising_destinations", actual: "rising_destinations" } }],
       [
@@ -76,7 +86,7 @@ test("an abstention is wrong, since no_signal is the label for a post with nothi
     { candidate, answers: [{ caseId: "p1", abstain: "unsure" }, { caseId: "p2", answer: { label: "no_signal" } }, { caseId: "p3", answer: { label: "no_signal" } }] },
     options,
   );
-  const [abstained] = await evaluateRun(scenario, dataset.cases, run.results);
+  const [abstained] = (await evaluateRun(scenario, dataset.cases, run.results)).filter(({ evaluator }) => evaluator.id === "label");
   assert.equal(abstained!.verdict.outcome, "fail");
 });
 
@@ -88,7 +98,7 @@ test("a stored run's answers come across as recorded, and a post with no recorde
   ]
     .map((row) => JSON.stringify(row))
     .join("\n");
-  const imported = answersFromResults(`${jsonl}\n`, candidate, "2026-07-23T18:26:12Z");
+  const imported = answersFromResults(`${jsonl}\n`, candidate, { startedAt: "2026-07-23T18:26:12Z" });
 
   assert.deepEqual(imported, {
     candidate,
@@ -109,4 +119,81 @@ test("a run folder's name gives the moment the run started", () => {
   assert.equal(startOf("run-2026-07-23T18-26-12"), "2026-07-23T18:26:12Z");
   assert.equal(startOf("run-2026-08-07T10-27-58-armB-run1"), "2026-08-07T10:27:58Z");
   assert.equal(startOf("results"), undefined);
+});
+
+// --- The place check ------------------------------------------------------------------
+
+const INNSBRUCK = { placeName: "Innsbruck", canonicalName: "Innsbruck", placeId: "place-1" };
+
+/** Three posts as a runner recorded them: p1 labelled rising, p2 (should be no_signal) and p3 as given. */
+function stored(p2: Partial<StoredPost>, p1: Partial<StoredPost> = {}): string {
+  return [
+    { post_id: "p1", predicted: "rising_destinations", toolCalls: 1, groundedPlaces: [INNSBRUCK], ...p1 },
+    { post_id: "p2", predicted: "no_signal", toolCalls: 0, groundedPlaces: [], ...p2 },
+    { post_id: "p3", predicted: "planning_pain_points", toolCalls: 0, groundedPlaces: [] },
+  ]
+    .map((row) => JSON.stringify(row))
+    .join("\n");
+}
+
+async function verdicts(imported: ImportedAnswers): Promise<Record<string, Record<string, string>>> {
+  const run = importRun(scenario, dataset, imported, options);
+  const records: EvaluationRecord[] = await evaluateRun(scenario, dataset.cases, run.results, toolRecordOf(run.manifest));
+  const byCheck: Record<string, Record<string, string>> = {};
+  for (const { caseId, evaluator, verdict } of records) {
+    if (evaluator.id === "label") continue;
+    byCheck[evaluator.id] ??= {};
+    byCheck[evaluator.id]![caseId] = verdict.outcome === "fail" || verdict.outcome === "not_applicable" ? `${verdict.outcome}: ${verdict.detail}` : verdict.outcome;
+  }
+  return byCheck;
+}
+
+const tools = [{ name: "verify_place" }];
+
+test("a rising destination needs a confirmed place, and a post with nothing in it needs no lookup", async () => {
+  const sloppy = stored(
+    { toolCalls: 1, groundedPlaces: [], toolTrace: [{ query: { placeName: "Sedona" }, found: true, canonicalName: "Sedona", placeId: "place-2" }] } as Partial<StoredPost>,
+    { toolCalls: 1, toolTrace: [{ query: { placeName: "Atlantis" }, found: false }] } as Partial<StoredPost>,
+  );
+  assert.deepEqual(await verdicts(answersFromResults(sloppy, candidate, { tools, lookups: mcpLookups })), {
+    verified: {
+      p1: "fail: labelled rising_destinations without a confirmed place",
+      p2: "not_applicable: only a post labelled rising_destinations needs a confirmed place",
+      p3: "not_applicable: only a post labelled rising_destinations needs a confirmed place",
+    },
+    restraint: {
+      p1: "not_applicable: only a post that should be no_signal must get no lookup",
+      p2: "fail: looked up a place on a post with nothing in it: Sedona",
+      p3: "not_applicable: only a post that should be no_signal must get no lookup",
+    },
+  });
+});
+
+test("Camunda's record, the places it confirmed, is enough for both rules", async () => {
+  const careful = answersFromResults(stored({}), candidate, { tools, lookups: camundaLookups });
+  assert.deepEqual(careful.answers[0]!.toolCalls, [{ name: "verify_place", args: null, result: { found: true, ...INNSBRUCK } }]);
+  const result = await verdicts(careful);
+  assert.equal(result.verified!.p1, "pass");
+  assert.equal(result.restraint!.p2, "pass");
+
+  // A lookup that confirmed nothing is still a lookup, though what it asked was not recorded.
+  const extra = answersFromResults(stored({ toolCalls: 1 }), candidate, { tools, lookups: camundaLookups });
+  assert.deepEqual(extra.answers[1]!.toolCalls, [{ name: "verify_place", args: null }]);
+  assert.equal((await verdicts(extra)).restraint!.p2, "fail: looked up a place on a post with nothing in it");
+
+  // A confirmed place carries an id only a lookup returns, so it counts as one even where the count missed it, and says so.
+  const missed = { post_id: "p9", toolCalls: 0, groundedPlaces: [INNSBRUCK] };
+  assert.deepEqual(camundaLookups(missed), [{ name: "verify_place", args: null, result: { found: true, ...INNSBRUCK } }]);
+  assert.deepEqual(camundaCorrections(`${JSON.stringify(missed)}\n${stored({})}`), [
+    "p9: 1 confirmed place(s) but 0 lookup(s) counted; taken as one lookup per confirmed place",
+  ]);
+  assert.throws(() => mcpLookups({ post_id: "p9", toolCalls: 2, toolTrace: [] }), /2 tool calls counted, but 0 recorded/);
+});
+
+test("the place rules do not judge a system that had no place check, or whose lookups were not recorded", async () => {
+  const none = await verdicts({ ...answersFromResults(stored({}), candidate), tools: [] });
+  assert.deepEqual(new Set(Object.values(none).flatMap(Object.values)), new Set(["not_applicable: this system had no place check"]));
+
+  const unrecorded = await verdicts(answersFromResults(stored({}), candidate));
+  assert.deepEqual(new Set(Object.values(unrecorded).flatMap(Object.values)), new Set(["not_applicable: the run did not record its tool calls"]));
 });

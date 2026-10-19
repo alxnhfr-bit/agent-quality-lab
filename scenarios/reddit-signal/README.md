@@ -65,14 +65,38 @@ The agent's per-label precision and recall, and its table of which label was mis
 
 Three MCP runs on 31 of the posts are not imported, since a run has to cover every case of its dataset.
 
+## The place check
+
+The Camunda and MCP prompts carry a tool policy: before calling a post a rising destination, confirm with the `verify_place` tool that the place exists, and leave the tool alone otherwise. Two checks mirror the projects' own scorer:
+
+- **`verified`**: a post labelled `rising_destinations` has a confirmed place.
+- **`restraint`**: a post that should be `no_signal` gets no lookup at all.
+
+The lookups come from what each project recorded. MCP recorded every lookup: what was asked and what came back. Camunda recorded less, how many lookups a post got and which places they confirmed, so for Camunda the lab knows each confirmed place but not the question asked. The agent had no tool, so neither check applies to it.
+
+| Run | Verified | Restraint | Lookups on a post that should be `no_signal` |
+|---|---:|---:|---|
+| Camunda, first run | 7/9 | 59/62 | 1uq2v7u |
+| Camunda, re-run | 7/7 | 62/62 | none |
+| MCP arm A, run 1 | 8/8 | 61/62 | 1ute6a4 (Sedona) |
+| MCP arm A, run 2 | 8/8 | 61/62 | 1ute6a4 (Sedona) |
+| MCP arm A, run 3 | 7/7 | 61/62 | 1ute6a4 (Sedona) |
+| MCP arm B | 8/8 | 61/62 | 1ute6a4 (Sedona) |
+| MCP arm C | 9/9 | 60/62 | 1ute6a4 (Sedona), 1uscl07 |
+
+Every figure matches the project's own report except for Camunda's first run, which its report gives as 7/7 and 61/62. The difference is the two posts with no recorded label, described below: the lab counts a post without an answer against every check, including these two.
+
+A side-by-side comparison shows the lookups too: Camunda's re-run and MCP's second run differ on Sedona, where MCP looked the place up and then called the post a rising destination, and on two posts where Camunda made two lookups and MCP one.
+
 ## Where the lab counts differently
 
 The totals agree, but two things are recorded as what they were rather than mapped onto a label:
 
 - **A label outside the five** is malformed output. The agent's own scorer counts it as `no_signal`, which can turn it into a right answer. None of the stored runs above contains one.
 - **A post with no recorded label** is an error. The Camunda project's first run has two of these: its runner read the result before the engine had stored it, as the project's own friction log describes. Its report counts them as wrong answers; the lab counts them as wrong too, but as errors, so the fault in the measurement stays visible.
+- **A confirmed place with no lookup counted.** In the same run, post 1uqrtb7 has a confirmed place but a lookup count of zero. The count was read from the same lagging store; a confirmed place carries an id that only a lookup returns. The lab counts it as one lookup and records the correction with the run, under `lookupCorrections`.
 
 ## Not yet
 
-- The Camunda and MCP projects recorded their tool calls. They are not imported yet, so the lab cannot yet check that places were verified, and it shows their tool calls as "not imported", not as zero.
+- MCP's model calls and token counts, and the projects' own timings, are not imported.
 - Running a system live through the lab. The scenario gives no instructions of its own: each project brought its own rubric and prompt, recorded with its runs.

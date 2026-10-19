@@ -118,6 +118,7 @@ const amount: Check = {
 const evidence: Check = {
   id: "evidence",
   version: "1",
+  readsToolCalls: true,
   evaluate(c, { output, trace }) {
     if (!c.expected) return NO_EXPECTATION;
     const calls = toolCalls(trace);
@@ -137,6 +138,7 @@ const evidence: Check = {
 const toolUse: Check = {
   id: "tool-use",
   version: "1",
+  readsToolCalls: true,
   evaluate(c, { trace }) {
     if (!c.expected) return NO_EXPECTATION;
     const calls = toolCalls(trace);

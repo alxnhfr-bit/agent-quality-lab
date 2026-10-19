@@ -186,9 +186,11 @@ A system that already ran somewhere else can be scored without running it again.
 npx aql import <scenario> <answers-file> --dataset <name>
 ```
 
-The file names the system and lists its answers: `{ "candidate": { "id", "version", "config" }, "startedAt", "answers": [ ... ] }`, where each answer is `{ "caseId", "answer" }`, `{ "caseId", "abstain" }` or `{ "caseId", "error" }`. An answer is checked exactly as a candidate's would be, so one that does not fit the scenario is malformed output, not mapped onto something that fits. An import that does not cover every case is refused.
+The file names the system and lists its answers: `{ "candidate": { "id", "version", "config" }, "startedAt", "tools", "answers": [ ... ] }`, where each answer is `{ "caseId", "answer" }`, `{ "caseId", "abstain" }` or `{ "caseId", "error" }`. An answer is checked exactly as a candidate's would be, so one that does not fit the scenario is malformed output, not mapped onto something that fits. An import that does not cover every case is refused.
 
-An imported run says where its answers came from. It records no durations, no settings and no instructions, because the lab did not watch the answers being made, and it shows tool calls it was not given as "not imported", not as zero. Two imported runs of the same dataset can be compared like any other two runs.
+`tools` says which tools the system could call. When it is given, every answer brings the calls it made as `"toolCalls": [{ "name", "args", "result" or "error" }]`, an empty list when it made none, and they go into the trace as reported by the source. When it is left out, the system's tool calls are not known: the report shows them as "not imported", not as zero, and a check that reads tool calls does not judge the run.
+
+An imported run says where its answers came from. It records no durations, no settings and no instructions, because the lab did not watch the answers being made. Two imported runs of the same dataset can be compared like any other two runs.
 
 ## The scenarios
 
@@ -313,7 +315,7 @@ Measurement:
 - The scenarios' evaluators are deterministic code. In the interface the judge is a model, and a model can be wrong. Nothing yet measures how often it agrees with a person, and there is no human review.
 - The interface's spending limit covers the agent's answers. Judging is priced and shown, but not limited.
 - An evaluator cannot judge the trace of a case that did not complete.
-- An imported answer comes without its trace, so an evaluator that reads the trace cannot tell it from an answer that made no calls. No scenario that is imported into uses such an evaluator yet.
+- An imported run's tool calls are what the source recorded and reported. The lab saw none of them, and records the evidence as weaker for it.
 
 Engineering:
 
@@ -342,6 +344,8 @@ A scenario states its task as written instructions, says what shape an answer ha
 Tags are free labels on a case, such as `boundary` or `tool-failure`. Summaries, comparisons and the HTML report repeat every count per tag, so a weakness on one kind of case stays visible.
 
 A case can carry a `setup`: the facts of that one case, such as what a lookup returns or which service is down. The scenario builds the case's tools from it and evaluators can read it, but the candidate never receives it. `travel-cancellation` uses one for every case; in `stock-check` the tools behave the same way for every case.
+
+An evaluator whose verdict depends on the tool calls in the trace says so with `readsToolCalls: true`. On a run whose tool calls were not recorded, the lab then records "not applicable" for it instead of reading an empty trace as no calls. An evaluator is also told which tools the candidate could call, when the run knows, so it can tell a candidate that skipped a tool from one that never had it.
 
 [scenarios/stock-check](scenarios/stock-check) is the smallest complete example. [scenarios/travel-cancellation](scenarios/travel-cancellation) shows a setup per case, and [scenarios/travel-shared](scenarios/travel-shared) holds the made-up marketplace that further travel scenarios can reuse. The contracts a scenario and a candidate implement are in [packages/core/src/types.ts](packages/core/src/types.ts), and the format of the run files is in [packages/core/src/artifact.ts](packages/core/src/artifact.ts).
 

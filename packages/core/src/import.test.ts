@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { z } from "zod";
 import { manifestSchema } from "./artifact.ts";
 import { comparability } from "./compare.ts";
-import { evaluateRun } from "./evaluate.ts";
+import { evaluateRun, toolRecordOf } from "./evaluate.ts";
 import { importRun, type ImportedAnswers } from "./import.ts";
 import { parseDataset } from "./store.ts";
 import { summarize } from "./summary.ts";
@@ -121,4 +121,71 @@ test("an imported run is scored like any other, and two imports of the same data
   );
   const runData = (run: typeof first) => ({ manifest: run.manifest, cases: JSON.parse(`[${dataset.text.trim().split("\n").join(",")}]`), results: run.results, evaluations });
   assert.deepEqual(comparability(runData(first), runData(second)), []);
+});
+
+test("tool calls come along when the file says which tools the system had, recorded as reported by the source", () => {
+  const lookup = { name: "lookup", args: { q: "one" }, result: { found: true }, durationMs: 12 };
+  type Calls = ImportedAnswers["answers"][number]["toolCalls"];
+  const withTools = (toolCalls: Calls, tools: { name: string }[] | null = [{ name: "lookup" }]) => ({
+    candidate,
+    ...(tools && { tools }),
+    answers: ["c1", "c2", "c3", "c4"].map((caseId, i) => ({ caseId, answer: { label: "a" }, ...(toolCalls && { toolCalls: i === 0 ? toolCalls : [] }) })),
+  });
+
+  const run = importRun(scenario, dataset, withTools([lookup, { name: "lookup", args: null }]), options);
+  assert.deepEqual(run.results[0]!.trace, [
+    { seq: 0, source: "reported", type: "tool_call", name: "lookup", args: { q: "one" }, result: { found: true }, durationMs: 12 },
+    { seq: 1, source: "reported", type: "tool_call", name: "lookup", args: null },
+  ]);
+  assert.deepEqual(run.manifest.origin?.tools, [{ name: "lookup" }]);
+  assert.deepEqual(toolRecordOf(run.manifest), { calls: true, tools: ["lookup"] });
+
+  // A system without tools brings no calls, and one without a word on its tools brings no evidence about them.
+  assert.deepEqual(toolRecordOf(importRun(scenario, dataset, withTools(undefined, []), options).manifest), { calls: true, tools: [] });
+  assert.deepEqual(toolRecordOf(importRun(scenario, dataset, withTools(undefined, null), options).manifest), { calls: false });
+
+  assert.throws(() => importRun(scenario, dataset, withTools([lookup], null), options), /lists tool calls, but the file does not say which tools the system had/);
+  assert.throws(() => importRun(scenario, dataset, withTools(undefined), options), /brings no tool calls, though the system had tools/);
+  assert.throws(() => importRun(scenario, dataset, withTools([{ ...lookup, name: "search" }]), options), /calls "search", which is not among the system's tools/);
+});
+
+test("a check that reads tool calls does not judge a run whose tool calls were not recorded", async () => {
+  const seen: (readonly string[] | undefined)[] = [];
+  const looked: Evaluator<string, Label, Label> = {
+    id: "looked",
+    version: "1",
+    readsToolCalls: true,
+    evaluate: (_c, { trace, tools }) => {
+      seen.push(tools);
+      return { outcome: trace.length > 0 ? "pass" : "fail" };
+    },
+  };
+  const checks = { ...scenario, evaluators: [sorts, looked] };
+  const all = (extra: object) => ["c1", "c2", "c3", "c4"].map((caseId) => ({ caseId, answer: { label: "a" }, ...extra }));
+  const outcomes = async (imported: ImportedAnswers) => {
+    const run = importRun(checks, dataset, imported, options);
+    const records = await evaluateRun(checks, dataset.cases, run.results, toolRecordOf(run.manifest));
+    return records.filter(({ evaluator }) => evaluator.id === "looked").map(({ verdict }) => verdict.outcome === "not_applicable" ? verdict.detail : verdict.outcome);
+  };
+
+  assert.deepEqual(await outcomes({ candidate, answers: all({}) }), Array(4).fill("the run did not record its tool calls"));
+  assert.deepEqual(seen, [], "the check is not asked at all");
+  assert.deepEqual(await outcomes({ candidate, tools: [{ name: "lookup" }], answers: all({ toolCalls: [] }) }), Array(4).fill("fail"));
+  assert.deepEqual(seen, Array(4).fill(["lookup"]));
+});
+
+test("a run the lab made has its tool calls, and the tools its scenario offered", () => {
+  const made = manifestSchema.parse({
+    schemaVersion: 1,
+    runId: "2026-10-19T09-00-00Z_sorting_program",
+    scenario: { id: "sorting", version: "1", instructions: "", tools: [{ name: "lookup", description: "Looks up.", parameters: {} }] },
+    dataset: { name: "dev", sha256: dataset.sha256, caseCount: 4 },
+    candidate: { id: "program", version: "1", config: null, deterministic: true },
+    settings: { timeoutMs: 100 },
+    startedAt: "2026-10-19T09:00:00.000Z",
+    environment,
+  });
+  assert.deepEqual(toolRecordOf(made), { calls: true, tools: ["lookup"] });
+  const { tools: _, ...older } = made.scenario;
+  assert.deepEqual(toolRecordOf({ ...made, scenario: older }), { calls: true });
 });

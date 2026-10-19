@@ -105,6 +105,11 @@ export interface CompletedCase<O> {
   trace: readonly TraceEvent[];
   /** Absent for an answer the lab imported, not ran. */
   durationMs?: number;
+  /**
+   * The tools the candidate could call, by name, when the run knows them: the
+   * ones the scenario offered, or for an imported run the ones the source had.
+   */
+  tools?: readonly string[];
 }
 
 /** Judges one aspect of a completed case against an expectation. */
@@ -112,6 +117,12 @@ export interface Evaluator<I, O, E, S = undefined> {
   id: string;
   /** Change it whenever the judgment changes, so old and new verdicts are not mixed. */
   version: string;
+  /**
+   * Set when the judgment depends on the tool calls in the trace. On a run whose
+   * tool calls were not recorded, as for answers imported without them, the lab
+   * then records not_applicable instead of letting an empty trace count as none.
+   */
+  readsToolCalls?: boolean;
   evaluate(c: Case<I, E, S>, completed: CompletedCase<O>): Judgment | Promise<Judgment>;
 }
 

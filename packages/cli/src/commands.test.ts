@@ -158,6 +158,8 @@ test("import loads answers made elsewhere as a scored run, and says what the lab
   assert.match(output, /\ntool calls +not imported\n/);
   assert.equal(output.includes("duration "), false);
   assert.match(output, /\ncorrectness +1 +12\/12 /);
+  // The file does not say which tools the system had, so the check that reads tool calls does not judge it.
+  assert.match(output, /\ntool-use +1 +n\/a +0 +12 +0 +0\n/);
 
   const run = await loadRun(join(p.runsDir, await onlyRun(p.runsDir)));
   assert.deepEqual(run.manifest.origin, {

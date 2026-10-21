@@ -138,6 +138,7 @@ export function answersFromResults(
   candidate: Candidate,
   options: {
     startedAt?: string | undefined;
+    run?: JsonValue;
     tools?: ImportedAnswers["tools"];
     lookups?: (row: StoredPost) => ToolCall[];
   } = {},
@@ -157,6 +158,7 @@ export function answersFromResults(
   return {
     candidate,
     ...(options.startedAt && { startedAt: options.startedAt }),
+    ...(options.run !== undefined && { run: options.run }),
     ...(options.tools && { tools: options.tools }),
     answers,
   };
@@ -262,8 +264,6 @@ function main(): void {
     version: "rubric-v2-prompt",
     config: {
       project: "reddit-signal-agent",
-      file: predictions,
-      ...commitOf(agent, predictions),
       model: "claude-haiku-4-5",
       reads: "subreddit, title, upvotes, comment count and the first 500 characters of the post text",
       requests: `all ${POSTS} posts in one request, as in production`,
@@ -272,6 +272,7 @@ function main(): void {
   });
   // It had no tool, so the place-check rules do not apply to it.
   agentAnswers.tools = [];
+  agentAnswers.run = { file: predictions, ...commitOf(agent, predictions) };
   write(join(imports, "labels-v2", "signal-agent.json"), json(agentAnswers), `${agentAnswers.answers.length} answers`);
 
   const skipped: string[] = [];
@@ -283,21 +284,25 @@ function main(): void {
     const corrections = camundaCorrections(jsonl);
     const answers = answersFromResults(
       jsonl,
+      // What the system was. Both runs are of the same process; only the runner that read the results was fixed in between.
       {
         id: "camunda",
-        version: run,
+        version: "1",
         config: {
           project: "camunda trial",
-          file,
-          ...commitOf(camunda, file),
           model: "claude-sonnet-5",
           reads: "subreddit and title",
           requests: "one post at a time, as a Camunda process instance",
           lookups: "recorded as how many each post got and which places they confirmed; what was asked is not recorded",
-          ...(corrections.length > 0 && { lookupCorrections: corrections }),
         },
       },
-      { startedAt: startOf(run), tools: [{ name: PLACE_CHECK }], lookups: camundaLookups },
+      {
+        startedAt: startOf(run),
+        // Which run this was.
+        run: { folder: run, file, ...commitOf(camunda, file), ...(corrections.length > 0 && { lookupCorrections: corrections }) },
+        tools: [{ name: PLACE_CHECK }],
+        lookups: camundaLookups,
+      },
     );
     if (answers.answers.length !== POSTS) skipped.push(`  camunda ${run}: ${answers.answers.length} of ${POSTS} posts`);
     else {
@@ -313,20 +318,21 @@ function main(): void {
     if (!arm) throw new Error(`mcp-grounding ${run}: run-config.json names no arm`);
     const answers = answersFromResults(
       readFileSync(join(mcp, file), "utf8"),
+      // What the system was: one arm, the same in each of its runs.
       {
         id: `mcp-arm-${arm.toLowerCase()}`,
-        version: run,
+        version: "1",
         config: {
           project: "mcp-grounding",
-          file,
-          ...commitOf(mcp, file),
           reads: "subreddit and title",
           requests: "one post at a time, through an MCP server",
-          ...pick(settings, ["label", "model", "maxTokens", "temperature", "maxModelCalls", "rubricArm", "toolDescriptionId"]),
+          ...pick(settings, ["model", "maxTokens", "temperature", "maxModelCalls", "rubricArm", "toolDescriptionId", "systemPromptChars"]),
         },
       },
       {
         startedAt: typeof settings.startedAt === "string" ? settings.startedAt : startOf(run),
+        // Which run this was.
+        run: { folder: run, file, ...commitOf(mcp, file), ...pick(settings, ["label", "sdkVersion"]) },
         tools: [
           {
             name: PLACE_CHECK,

@@ -247,6 +247,12 @@ export const manifestSchema = z.strictObject({
        * that is not known, and then neither are its tool calls.
        */
       tools: z.array(z.strictObject({ name: id, description: z.string().optional() })).optional(),
+      /**
+       * What the source recorded about this one run, such as its own name or
+       * file. It says which run this was; the candidate says what the system was,
+       * so that repeated runs of one system are recognised as such.
+       */
+      run: jsonSchema.optional(),
     })
     .optional(),
   prices: pricesSchema.optional(),

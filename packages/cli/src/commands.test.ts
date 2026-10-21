@@ -7,7 +7,16 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { loadRun } from "@agent-quality-lab/core/store";
-import { RunStopped, UsageError, compareCommand, evalCommand, importCommand, runCommand, type Project } from "./commands.ts";
+import {
+  RunStopped,
+  UsageError,
+  compareCommand,
+  evalCommand,
+  importCommand,
+  overviewCommand,
+  runCommand,
+  type Project,
+} from "./commands.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 
@@ -189,6 +198,48 @@ test("import refuses answers that cannot be read or do not cover every case, and
   await refused(broken, /broken\.json cannot be imported: /);
   await refused(await answersFile("2026-08-01T09:00:00.000Z", (i) => i < 2), /cannot be imported: the answers cover 2 of the 12 cases; missing: /);
   assert.deepEqual(await readdir(p.runsDir), []);
+});
+
+/** Imports a run of `system` on stock-check that gets the first `wrong` of its answers wrong. */
+async function importRunOf(p: Project, system: string, startedAt: string, wrong: number): Promise<void> {
+  const cases = (await readFile(join(root, "scenarios", "stock-check", "datasets", "dev.jsonl"), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { id: string; expected: { behaviour: string; canFulfil?: boolean } });
+  let flipped = 0;
+  const answers = cases.map((c) => {
+    if (c.expected.behaviour === "abstain") return { caseId: c.id, abstain: "cannot tell" };
+    const canFulfil = flipped++ < wrong ? !c.expected.canFulfil : c.expected.canFulfil;
+    return { caseId: c.id, answer: { canFulfil } };
+  });
+  const file = join(await mkdtemp(join(tmpdir(), "aql-answers-")), `${system}.json`);
+  await writeFile(file, JSON.stringify({ candidate: { id: system, version: "1", config: {} }, startedAt, answers }));
+  await importCommand(p, { scenario: "stock-check", answers: file });
+}
+
+test("overview shows each system's runs as a range, and calls a difference only where the ranges lie apart", async () => {
+  const p = await project();
+  for (const [i, wrong] of [0, 0, 0].entries()) await importRunOf(p, "careful", `2026-08-0${i + 1}T09:00:00.000Z`, wrong);
+  for (const [i, wrong] of [3, 4, 3].entries()) await importRunOf(p, "sloppy", `2026-08-0${i + 4}T09:00:00.000Z`, wrong);
+  const html = join(p.runsDir, "..", `overview-${Date.now()}.html`);
+  const output = await overviewCommand(p, { scenario: "stock-check", html });
+
+  assert.match(output, /^stock-check v1 · dataset dev · 12 cases\n/);
+  assert.match(output, /\nsystem   runs  correctness  tool-use\ncareful  3     100%         n\/a\nsloppy   3     66\.7–75\.0%   n\/a\n/);
+  assert.match(output, /\ndifferences\n  careful is higher than sloppy on correctness: 100% against 66\.7–75\.0%\n/);
+  assert.match(output, /\n    correctness: the same verdict in every run on 11 cases \(8 passed every time, 3 failed every time\)\n      varied on 1: small-one-over passed 2 of 3\n/);
+  assert.ok(output.endsWith(`HTML overview written to ${html}`));
+  const page = await readFile(html, "utf8");
+  assert.ok(page.includes("Careful is higher than sloppy on correctness: 100% against 66.7–75.0%."));
+  assert.equal(page.includes(root), false);
+});
+
+test("overview says when there is nothing to show", async () => {
+  const p = await project();
+  await assert.rejects(overviewCommand(p, { scenario: "stock-check" }), /there are no runs of scenario "stock-check"/);
+  await importRunOf(p, "careful", "2026-08-01T09:00:00.000Z", 0);
+  await assert.rejects(overviewCommand(p, { scenario: "stock-check", dataset: "other" }), /no runs of scenario "stock-check" on dataset "other" \(runs exist for: dev\)/);
+  assert.match(await overviewCommand(p, { scenario: "stock-check" }), /\n  none can be called yet: .* and no system qualifies\n/);
 });
 
 test("mistakes in usage name what is available", async () => {

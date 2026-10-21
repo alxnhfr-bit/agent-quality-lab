@@ -66,6 +66,12 @@ export const importedAnswersSchema = z.strictObject({
   /** When the source run started, if it is known. The run is named after it. */
   startedAt: z.iso.datetime().optional(),
   /**
+   * What the source recorded about this one run, such as its own name or file.
+   * Kept apart from `candidate`, which says what the system was: repeated runs
+   * of one system share a candidate and differ here.
+   */
+  run: jsonSchema.optional(),
+  /**
    * The tools the system could call. Given, every answer brings its tool calls;
    * an empty list means it had none. Left out, its tool calls are not known.
    */
@@ -89,7 +95,7 @@ export function importRun<I, O, E, S>(
   imported: ImportedAnswers,
   options: ImportOptions,
 ): Run {
-  const { candidate, startedAt, tools, answers } = importedAnswersSchema.parse(imported);
+  const { candidate, startedAt, run, tools, answers } = importedAnswersSchema.parse(imported);
   const now = options.now ?? (() => new Date());
 
   // Tool calls are evidence only when it is known which tools there were, and every answer says what it called.
@@ -138,7 +144,13 @@ export function importRun<I, O, E, S>(
     scenario: { id: scenario.id, version: scenario.version },
     dataset: { name: dataset.name, sha256: dataset.sha256, caseCount: dataset.cases.length },
     candidate,
-    origin: { kind: "imported", source: options.source, sha256: options.sha256, ...(tools && { tools }) },
+    origin: {
+      kind: "imported",
+      source: options.source,
+      sha256: options.sha256,
+      ...(tools && { tools }),
+      ...(run !== undefined && { run }),
+    },
     startedAt: started.toISOString(),
     finishedAt: now().toISOString(),
     environment: options.environment,

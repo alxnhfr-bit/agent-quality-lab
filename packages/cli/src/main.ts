@@ -3,7 +3,16 @@ import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { projectRoot } from "@agent-quality-lab/core/store";
-import { DEFAULT_MAX_COST, RunStopped, UsageError, compareCommand, evalCommand, importCommand, runCommand } from "./commands.ts";
+import {
+  DEFAULT_MAX_COST,
+  RunStopped,
+  UsageError,
+  compareCommand,
+  evalCommand,
+  importCommand,
+  overviewCommand,
+  runCommand,
+} from "./commands.ts";
 
 const USAGE = `Usage:
   aql run <scenario> --candidate <name> [--dataset <name>] [--concurrency <n>] [--max-cost <usd>]
@@ -23,6 +32,11 @@ const USAGE = `Usage:
       Open the interface in your browser: describe an agent, describe a test, read the scorecard.
       --demo tries it out without calling any model.
       --workspace is where your agents, tests and results are kept (default: workspace).
+
+  aql overview <scenario> [--dataset <name>] [--html <file>]
+      Show every system that ran on a dataset, each check as a range over its runs.
+      Runs of the same candidate, version and settings under the same conditions are repeats of each other,
+      and a difference is called only where the ranges of systems with enough runs lie apart.
 
   aql compare <run-a> <run-b> [--html <file>]
       Show where two runs of the same scenario and dataset differ, case by case.
@@ -88,6 +102,9 @@ async function main(argv: string[]): Promise<string> {
       },
       (line) => console.error(line),
     );
+  }
+  if (command === "overview" && target && extra.length === 0) {
+    return overviewCommand(project, { scenario: target, dataset: values.dataset, html: values.html });
   }
   if (command === "eval" && target && extra.length === 0) {
     return evalCommand(project, { run: target });

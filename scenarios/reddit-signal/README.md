@@ -90,6 +90,23 @@ Every figure matches the project's own report except one. Camunda's first run ha
 
 A side-by-side comparison shows the lookups too: Camunda's re-run and MCP's second run differ on Sedona, where MCP looked the place up and then called the post a rising destination, and on two posts where Camunda made two lookups and MCP one.
 
+## Repeated runs
+
+MCP arm A was run three times, and Camunda twice. `aql overview reddit-signal --dataset labels-v2.1` shows every system with each check as a range over its runs:
+
+| System | Runs | Right label | Verified | Restraint |
+|---|---:|---:|---:|---:|
+| MCP arm A | 3 | 86.8–89.0% | 100% | 98.4% |
+| Camunda | 2 | 86.8–87.6% * | 100% * | 98.3–100% * |
+| MCP arm B | 1 | 86.8% | 100% | 98.4% |
+| MCP arm C | 1 | 85.7% | 100% | 96.8% |
+
+\* One of Camunda's runs has two posts without an answer, so its shares are of the 89 answers it gave.
+
+No difference between the systems can be called: only arm A ran three times with every post answered, and Camunda's figures sit inside arm A's range. The MCP project came to the same conclusion in its own write-up: moving the tool between protocols made no detectable difference to accuracy.
+
+Across arm A's three runs, 88 posts got the same verdict every time: 79 right every time and 9 wrong every time. The 9 are systematic, a matter for the prompt or the rubric. Three posts were right in only one run of three, among them the Sedona post. They are the noise a single run cannot tell apart from the rest.
+
 ## Where the lab counts differently
 
 The totals agree, but two things are recorded as what they were rather than mapped onto a label:

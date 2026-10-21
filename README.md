@@ -192,6 +192,21 @@ The file names the system and lists its answers: `{ "candidate": { "id", "versio
 
 An imported run says where its answers came from. It records no durations, no settings and no instructions, because the lab did not watch the answers being made. Two imported runs of the same dataset can be compared like any other two runs.
 
+### Repeated runs
+
+A model does not answer the same way twice, so one run of it is one sample. `aql overview` shows every system that ran on a dataset, with each check as a range over its runs:
+
+```bash
+npx aql overview stock-check
+```
+
+- Runs of the same candidate, version and settings, on the same dataset under the same conditions, are repeats of each other. The lab recognises them by itself.
+- Each check is shown as the share of judged answers that passed, from the lowest run to the highest. A run with cases without an answer is marked.
+- A difference between two systems is called only when each ran at least 3 times, every case has an answer in every run, and their ranges do not overlap. Anything less is said as what it is: too few runs, answers missing, or ranges that overlap.
+- For a system with more than one run, the overview lists the cases it got right every time, wrong every time, and right only sometimes. A case wrong every time points at the instructions or the task; one right only sometimes is chance. A case without an answer in some run is listed apart.
+
+Add `--html <file>` to also write the overview as one page.
+
 ## The scenarios
 
 | Scenario | The task | What it stresses |
@@ -305,7 +320,7 @@ Scope:
 
 Measurement:
 
-- A comparison uses one run per side. There are no repeated trials and no estimate of run-to-run noise, which is why a comparison describes differences and calls none of them a regression. A scorecard in the interface is one run as well: a model does not answer the same way twice, so the same test can give a different count the next time. The interface's side-by-side view says whether a difference is more than chance, which guards against reading too much into a small one; it is still one run per side, and comparing many versions makes it likelier that one of them clears that bar by luck.
+- `aql compare` uses one run per side, which is why it describes differences and calls none of them a regression. `aql overview` shows repeated runs as ranges, but its rule is deliberately simple: with 3 runs a range is a rough measure of noise, and the lab does not yet run repeats itself; they come from running a candidate several times or from imports. A scorecard in the interface is one run as well: a model does not answer the same way twice, so the same test can give a different count the next time. The interface's side-by-side view says whether a difference is more than chance, which guards against reading too much into a small one; it is still one run per side, and comparing many versions makes it likelier that one of them clears that bar by luck.
 - The lab sees only what goes through its own tools. A candidate's own tool calls, model calls and fallbacks appear only if the candidate reports them. A silent fallback inside an opaque candidate cannot be detected.
 - Model calls and their token counts are reported by the candidate. For the model candidates they are the provider's own figures, passed on.
 - A cost is those token counts at a price list kept in the repository by hand and saved with each run. It is not the provider's bill, and the list can go out of date. A call that cannot be priced is counted as such, not as free.

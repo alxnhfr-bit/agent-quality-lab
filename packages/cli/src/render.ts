@@ -1,5 +1,6 @@
 /** Turns a run and its summary into text. Formatting only: nothing here counts or scores. */
 import {
+  MIN_RUNS,
   passRate,
   type CaseComparison,
   type CaseResult,
@@ -8,9 +9,12 @@ import {
   type EvaluationRecord,
   type LabelBreakdown,
   type Manifest,
+  type Overview,
   type RunData,
+  type Spread,
   type RunSummary,
   type SliceSummary,
+  type Steadiness,
 } from "@agent-quality-lab/core";
 
 export interface RunReport {
@@ -355,4 +359,91 @@ function table(rows: readonly (readonly string[])[]): string[] {
 
 function indent(lines: string[]): string[] {
   return lines.map((line) => `  ${line}`);
+}
+
+// --- Overview --------------------------------------------------------------------
+
+/** "86.8–89.0%", "100%", or "n/a" for a check that judged nothing. */
+export function range({ low, high }: Pick<Spread, "low" | "high">): string {
+  if (low === null || high === null) return "n/a";
+  const percent = (share: number) => (share === 0 || share === 1 ? String(share * 100) : (share * 100).toFixed(1));
+  return low === high ? `${percent(low)}%` : `${percent(low)}–${percent(high)}%`;
+}
+
+/** Every system that ran on one dataset, each check as a range over its runs, and what can be said about the differences. */
+export function renderOverview(o: Overview): string {
+  const marked = (spread: Spread | undefined) => (spread ? `${range(spread)}${spread.unanswered ? " *" : ""}` : "n/a");
+  const systemsTable = (rows: (system: Overview["systems"][number]) => Record<string, Spread> | undefined) =>
+    table([
+      ["system", "runs", ...o.checks],
+      ...o.systems.map((s) => [s.name, String(s.runIds.length), ...o.checks.map((check) => marked(rows(s)?.[check]))]),
+    ]);
+  const anyUnanswered = o.systems.some((s) => !s.answered);
+
+  const lines = [
+    `${o.scenario.id} ${versioned(o.scenario.version)} · dataset ${o.dataset.name} · ${o.dataset.caseCount} cases`,
+    "",
+    "each check: the share of judged answers that passed, from the lowest to the highest run",
+    "",
+    ...systemsTable((s) => s.checks),
+  ];
+  if (anyUnanswered) lines.push("* a run of this system has cases without an answer");
+
+  for (const { tag, cases } of o.tags) {
+    lines.push("", `tag ${tag} (${cases} cases)`, ...indent(systemsTable((s) => s.byTag[tag])));
+  }
+
+  lines.push("", "differences", ...indent(differences(o)));
+
+  lines.push("", "runs and how steady they were");
+  for (const s of o.systems) {
+    lines.push(`  ${s.name}, ${s.runIds.length} run${s.runIds.length === 1 ? "" : "s"}`);
+    lines.push(
+      ...indent(
+        indent(table(s.runIds.map((runId, i) => [runId, ...o.checks.map((check) => `${check} ${share(s.checks[check]!.runs[i]!)}`)]))),
+      ),
+    );
+    if (!s.steadiness) continue;
+    for (const check of o.checks) lines.push(...steadyLines(check, s.steadiness[check]!).map((line, i) => `${i === 0 ? "    " : "      "}${line}`));
+  }
+
+  if (o.leftOut.length > 0) {
+    lines.push("", "left out", ...indent(table(o.leftOut.map(({ runId, reason }) => [runId, reason]))));
+  }
+  return lines.join("\n");
+}
+
+/** How steady one check was over a system's runs, as a line and the cases behind it. */
+export function steadyLines(check: string, steady: Steadiness): string[] {
+  const same = steady.passedEveryTime.length + steady.failedEveryTime.length;
+  const lines = [
+    steady.varied.length === 0 && steady.unanswered.length === 0
+      ? `${check}: the same verdict in every run`
+      : `${check}: the same verdict in every run on ${same} cases (${steady.passedEveryTime.length} passed every time, ${steady.failedEveryTime.length} failed every time)`,
+  ];
+  if (steady.varied.length > 0) {
+    lines.push(`varied on ${steady.varied.length}: ${steady.varied.map((v) => `${v.caseId} passed ${v.passed} of ${v.of}`).join(", ")}`);
+  }
+  if (steady.unanswered.length > 0) {
+    lines.push(`without an answer in some run: ${steady.unanswered.join(", ")}`);
+  }
+  return lines;
+}
+
+/** What can be said about the differences between systems, in sentences. */
+export function differences(o: Overview): string[] {
+  const rule = `a difference is called only between systems with at least ${MIN_RUNS} runs each, every case answered in every run, whose ranges do not overlap`;
+  if (o.eligible.length < 2) {
+    const qualifying = o.eligible.length === 0 ? "no system qualifies" : `only ${o.eligible[0]} qualifies`;
+    return [`none can be called yet: ${rule}, and ${qualifying}`];
+  }
+  const lines = o.differences.map(({ check, higher, lower }) => {
+    const spread = (name: string) => range(o.systems.find((s) => s.name === name)!.checks[check]!);
+    return `${higher} is higher than ${lower} on ${check}: ${spread(higher)} against ${spread(lower)}`;
+  });
+  if (o.overlaps.length > 0) {
+    lines.push(...o.overlaps.map(({ a, b, check }) => `${a} and ${b} overlap on ${check}, so no difference is called`));
+  }
+  lines.push(...o.incomparable.map(({ a, b, reasons }) => `${a} and ${b} cannot be compared: ${reasons.join("; ")}`));
+  return lines;
 }

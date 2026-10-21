@@ -6,6 +6,7 @@ export * from "./evaluate.ts";
 export * from "./import.ts";
 export * from "./json-schema.ts";
 export * from "./labels.ts";
+export * from "./overview.ts";
 export * from "./runner.ts";
 export * from "./summary.ts";
 export * from "./types.ts";

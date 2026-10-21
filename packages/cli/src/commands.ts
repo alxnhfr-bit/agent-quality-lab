@@ -12,6 +12,7 @@ import {
   evaluateRun,
   executeRun,
   importRun,
+  overview,
   summarize,
   toolRecordOf,
   type Candidate,
@@ -29,8 +30,9 @@ import {
   type RunWriter,
 } from "@agent-quality-lab/core/store";
 import { z } from "zod";
-import { renderComparison, renderRun } from "./render.ts";
+import { renderComparison, renderOverview, renderRun } from "./render.ts";
 import { renderHtmlReport } from "./report/html.ts";
+import { renderOverviewHtml } from "./report/overview-html.ts";
 
 /** A mistake in how the command was used. Shown as a message, without a stack trace. */
 export class UsageError extends Error {}
@@ -198,6 +200,36 @@ export async function compareCommand(
 
   writeFileSync(args.html, renderHtmlReport({ comparison, a, b }));
   return `${text}\n\nHTML report written to ${args.html}`;
+}
+
+/**
+ * Every system that ran on one dataset of a scenario, from the runs in the
+ * runs folder: each check as a range over a system's runs, and which
+ * differences between systems are wider than that.
+ */
+export async function overviewCommand(
+  project: Project,
+  args: { scenario: string; dataset?: string | undefined; html?: string | undefined },
+): Promise<string> {
+  const ids = existsSync(project.runsDir) ? readdirSync(project.runsDir).filter((id) => existsSync(join(project.runsDir, id, "manifest.json"))) : [];
+  const runs = [];
+  for (const id of ids) {
+    const run = await loadRun(join(project.runsDir, id));
+    if (run.manifest.scenario.id === args.scenario) runs.push(run);
+  }
+  const datasets = [...new Set(runs.map((run) => run.manifest.dataset.name))].sort();
+  if (datasets.length === 0) throw new UsageError(`there are no runs of scenario "${args.scenario}" in ${project.runsDir}`);
+  const name = args.dataset ?? (datasets.length === 1 ? datasets[0] : undefined);
+  if (name === undefined) throw new UsageError(`choose a dataset with --dataset (runs exist for: ${datasets.join(", ")})`);
+  if (!datasets.includes(name)) {
+    throw new UsageError(`there are no runs of scenario "${args.scenario}" on dataset "${name}" (runs exist for: ${datasets.join(", ")})`);
+  }
+
+  const result = overview(runs.filter((run) => run.manifest.dataset.name === name));
+  const text = renderOverview(result);
+  if (args.html === undefined) return text;
+  writeFileSync(args.html, renderOverviewHtml(result));
+  return `${text}\n\nHTML overview written to ${args.html}`;
 }
 
 /** A run is named by its id, or by a path to its directory. */
